@@ -1,359 +1,320 @@
-const STORAGE_KEY = "minichat_v2_state";
-const PROFILE_KEY = "minichat_v2_profile";
+// ====== STORAGE KEYS ======
+const LS_PROFILE = "minichat_profile_v1";
+const LS_CONTACTS = "minichat_contacts_v1";
+const LS_MESSAGES = "minichat_messages_v1"; // object: { contactId: [ {text, time, me} ] }
 
-const $ = (id) => document.getElementById(id);
+// ====== ELEMENTS ======
+const loginScreen = document.getElementById("loginScreen");
+const appRoot = document.getElementById("appRoot");
 
-const loginScreen = $("loginScreen");
-const appRoot = $("appRoot");
+const profileForm = document.getElementById("profileForm");
+const profileName = document.getElementById("profileName");
+const profileStatus = document.getElementById("profileStatus");
 
-const loginForm = $("loginForm");
-const profileName = $("profileName");
-const profileStatus = $("profileStatus");
-const profileAvatar = $("profileAvatar");
+const userName = document.getElementById("userName");
+const userStatus = document.getElementById("userStatus");
+const avatar = document.getElementById("avatar");
 
-const meName = $("meName");
-const meStatus = $("meStatus");
-const meAvatar = $("meAvatar");
-const logoutBtn = $("logoutBtn");
+const addContactBtn = document.getElementById("addContactBtn");
+const modalBackdrop = document.getElementById("modalBackdrop");
+const contactForm = document.getElementById("contactForm");
+const contactName = document.getElementById("contactName");
+const contactStatus = document.getElementById("contactStatus");
+const cancelBtn = document.getElementById("cancelBtn");
 
-const contactsEl = $("contacts");
-const messagesEl = $("messages");
-const chatNameEl = $("chatName");
-const chatStatusEl = $("chatStatus");
-const chatAvatarEl = $("chatAvatar");
+const contactsList = document.getElementById("contactsList");
+const contactsCount = document.getElementById("contactsCount");
 
-const messageInput = $("messageInput");
-const sendBtn = $("sendBtn");
-const deleteChatBtn = $("deleteChatBtn");
+const activeAvatar = document.getElementById("activeAvatar");
+const activeName = document.getElementById("activeName");
+const activeSub = document.getElementById("activeSub");
 
-const searchInput = $("searchInput");
-const clearAllBtn = $("clearAllBtn");
+const messagesEl = document.getElementById("messages");
+const messageForm = document.getElementById("messageForm");
+const messageInput = document.getElementById("messageInput");
+const sendBtn = document.getElementById("sendBtn");
+const clearChatBtn = document.getElementById("clearChatBtn");
 
-const newChatBtn = $("newChatBtn");
-const modalBackdrop = $("modalBackdrop");
-const newName = $("newName");
-const newStatus = $("newStatus");
-const cancelModal = $("cancelModal");
-const saveContact = $("saveContact");
+// ====== STATE ======
+let state = {
+  profile: null,
+  contacts: [],
+  activeContactId: null,
+  messagesByContact: {} // {id: []}
+};
 
-const sidebar = $("sidebar");
-const toggleSidebarBtn = $("toggleSidebarBtn");
+// ====== HELPERS ======
+function saveProfile(profile) {
+  localStorage.setItem(LS_PROFILE, JSON.stringify(profile));
+}
+function loadProfile() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_PROFILE));
+  } catch {
+    return null;
+  }
+}
+
+function saveContacts(contacts) {
+  localStorage.setItem(LS_CONTACTS, JSON.stringify(contacts));
+}
+function loadContacts() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_CONTACTS)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMessages(obj) {
+  localStorage.setItem(LS_MESSAGES, JSON.stringify(obj));
+}
+function loadMessages() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_MESSAGES)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function initials(name) {
+  const n = (name || "").trim();
+  if (!n) return "?";
+  const parts = n.split(/\s+/);
+  const a = parts[0]?.[0] || "";
+  const b = parts.length > 1 ? parts[parts.length - 1][0] : "";
+  return (a + b).toUpperCase();
+}
 
 function nowTime() {
   const d = new Date();
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-function initials(name) {
-  const parts = name.trim().split(/\s+/);
-  const a = parts[0]?.[0] || "U";
-  const b = parts[1]?.[0] || "";
-  return (a + b).toUpperCase();
-}
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
-  }[c]));
+  return d.toLocaleString();
 }
 
-function loadProfile() {
-  const raw = localStorage.getItem(PROFILE_KEY);
-  return raw ? JSON.parse(raw) : null;
-}
-function saveProfile(profile) {
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+function openModal() {
+  modalBackdrop.classList.remove("hidden");
+  modalBackdrop.setAttribute("aria-hidden", "false");
+  contactName.focus();
 }
 
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw) return JSON.parse(raw);
-
-  return {
-    activeId: "c1",
-    contacts: [
-      { id: "c1", name: "Sara", status: "Online", avatar: null, messages: [
-        { from: "you", text: "Hi! Welcome to MiniChat 😄", time: nowTime(), seen: true },
-        { from: "me", text: "Looks awesome!", time: nowTime(), seen: true }
-      ]},
-      { id: "c2", name: "Youssef", status: "Last seen today", avatar: null, messages: [] },
-      { id: "c3", name: "Maria", status: "Busy", avatar: null, messages: [] },
-    ]
-  };
-}
-let state = loadState();
-
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function closeModal() {
+  // ✅ هذا هو الحل الحقيقي ديال Cancel:
+  contactForm.reset();
+  modalBackdrop.classList.add("hidden");
+  modalBackdrop.setAttribute("aria-hidden", "true");
 }
 
-function setActive(id) {
-  state.activeId = id;
-  saveState();
-  render();
+function setActiveContact(id) {
+  state.activeContactId = id;
+
+  const c = state.contacts.find(x => x.id === id);
+  if (!c) return;
+
+  activeAvatar.textContent = initials(c.name);
+  activeName.textContent = c.name;
+  activeSub.textContent = c.status || "Online";
+
+  messageInput.disabled = false;
+  sendBtn.disabled = false;
+
+  renderContacts();
+  renderMessages();
 }
 
-function getActiveContact() {
-  return state.contacts.find(c => c.id === state.activeId) || null;
-}
+function renderContacts() {
+  contactsCount.textContent = String(state.contacts.length);
 
-function setAvatar(el, name, avatarDataUrl) {
-  el.innerHTML = "";
-  if (avatarDataUrl) {
-    const img = document.createElement("img");
-    img.src = avatarDataUrl;
-    img.alt = name;
-    el.appendChild(img);
-  } else {
-    el.textContent = initials(name);
+  contactsList.innerHTML = "";
+  if (state.contacts.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    empty.textContent = "No contacts yet. Click “+ New Contact”.";
+    contactsList.appendChild(empty);
+    return;
   }
-}
 
-function renderContacts(filter = "") {
-  contactsEl.innerHTML = "";
-  const q = filter.trim().toLowerCase();
-
-  const list = state.contacts.filter(c => {
-    if (!q) return true;
-    return c.name.toLowerCase().includes(q) || c.status.toLowerCase().includes(q);
-  });
-
-  list.forEach(c => {
+  state.contacts.forEach(c => {
     const item = document.createElement("div");
-    item.className = "contact" + (c.id === state.activeId ? " active" : "");
+    item.className = "contact" + (c.id === state.activeContactId ? " active" : "");
     item.innerHTML = `
-      <div class="avatar"></div>
-      <div class="c-meta">
-        <div class="c-name">${escapeHtml(c.name)}</div>
-        <div class="c-status">${escapeHtml(c.status)}</div>
+      <div class="c-avatar">${initials(c.name)}</div>
+      <div>
+        <div class="c-name">${c.name}</div>
+        <div class="c-status">${c.status || "Online"}</div>
       </div>
     `;
-    setAvatar(item.querySelector(".avatar"), c.name, c.avatar);
-
-    item.addEventListener("click", () => {
-      setActive(c.id);
-      sidebar.classList.remove("open");
-    });
-
-    contactsEl.appendChild(item);
+    item.addEventListener("click", () => setActiveContact(c.id));
+    contactsList.appendChild(item);
   });
-
-  if (list.length === 0) {
-    const empty = document.createElement("div");
-    empty.style.color = "rgba(255,255,255,.65)";
-    empty.style.padding = "12px 10px";
-    empty.textContent = "No contacts found.";
-    contactsEl.appendChild(empty);
-  }
 }
 
-function renderMessages(contact) {
+function renderMessages() {
   messagesEl.innerHTML = "";
 
-  if (!contact) {
-    messagesEl.innerHTML = `
-      <div class="empty">
-        <h2>Welcome 👋</h2>
-        <p>Select a contact to start chatting.</p>
-      </div>`;
+  const id = state.activeContactId;
+  if (!id) {
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = "Select a contact to start chatting.";
+    messagesEl.appendChild(hint);
     return;
   }
 
-  if (contact.messages.length === 0) {
-    messagesEl.innerHTML = `
-      <div class="empty">
-        <h2>No messages yet</h2>
-        <p>Send your first message to ${escapeHtml(contact.name)}.</p>
-      </div>`;
+  const arr = state.messagesByContact[id] || [];
+  if (arr.length === 0) {
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = "No messages yet. Say hi 👋";
+    messagesEl.appendChild(hint);
     return;
   }
 
-  contact.messages.forEach(m => {
+  arr.forEach(m => {
     const bubble = document.createElement("div");
-    bubble.className = `bubble ${m.from === "me" ? "me" : "you"}`;
+    bubble.className = "msg" + (m.me ? " me" : "");
     bubble.innerHTML = `
-      <div>${escapeHtml(m.text)}</div>
-      <div class="bmeta">
-        <span>${m.time}</span>
-        <span>${m.from === "me" ? (m.seen ? "Seen ✓✓" : "Delivered ✓") : ""}</span>
-      </div>
+      <div class="text">${escapeHtml(m.text)}</div>
+      <span class="time">${m.time}</span>
     `;
     messagesEl.appendChild(bubble);
   });
 
+  // scroll bottom
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function renderHeader(contact) {
-  if (!contact) {
-    chatNameEl.textContent = "Select a contact";
-    chatStatusEl.textContent = "—";
-    setAvatar(chatAvatarEl, "A", null);
-    messageInput.disabled = true;
-    sendBtn.disabled = true;
-    deleteChatBtn.disabled = true;
-    return;
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function boot() {
+  state.profile = loadProfile();
+  state.contacts = loadContacts();
+  state.messagesByContact = loadMessages();
+
+  if (state.profile) {
+    // go to app
+    loginScreen.classList.add("hidden");
+    appRoot.classList.remove("hidden");
+
+    userName.textContent = state.profile.name;
+    userStatus.textContent = state.profile.status;
+    avatar.textContent = initials(state.profile.name);
+
+    renderContacts();
+
+    // auto select first contact if exists
+    if (state.contacts.length > 0) {
+      setActiveContact(state.contacts[0].id);
+    }
+  } else {
+    // stay on login
+    loginScreen.classList.remove("hidden");
+    appRoot.classList.add("hidden");
+  }
+}
+
+// ====== EVENTS ======
+
+// Login/Profile
+profileForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+
+  const p = {
+    name: profileName.value.trim(),
+    status: profileStatus.value.trim()
+  };
+
+  if (!p.name || !p.status) return;
+
+  saveProfile(p);
+  boot();
+});
+
+// Open modal
+addContactBtn.addEventListener("click", () => {
+  openModal();
+});
+
+// ✅ Cancel button (حل المشكل)
+cancelBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  closeModal();
+});
+
+// Click outside modal closes it
+modalBackdrop.addEventListener("click", (e) => {
+  if (e.target === modalBackdrop) closeModal();
+});
+
+// ESC closes modal
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !modalBackdrop.classList.contains("hidden")) {
+    closeModal();
+  }
+});
+
+// Save new contact
+contactForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+
+  const name = contactName.value.trim();
+  const status = contactStatus.value.trim();
+
+  if (!name || !status) return;
+
+  const newContact = {
+    id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+    name,
+    status
+  };
+
+  state.contacts.unshift(newContact);
+  saveContacts(state.contacts);
+
+  // create messages bucket
+  if (!state.messagesByContact[newContact.id]) {
+    state.messagesByContact[newContact.id] = [];
+    saveMessages(state.messagesByContact);
   }
 
-  chatNameEl.textContent = contact.name;
-  chatStatusEl.textContent = contact.status;
-  setAvatar(chatAvatarEl, contact.name, contact.avatar);
+  closeModal();
+  renderContacts();
+  setActiveContact(newContact.id);
+});
 
-  messageInput.disabled = false;
-  sendBtn.disabled = false;
-  deleteChatBtn.disabled = false;
-}
-
-function renderProfile() {
-  const profile = loadProfile();
-  if (!profile) return;
-  meName.textContent = profile.name;
-  meStatus.textContent = profile.status || "Available";
-  setAvatar(meAvatar, profile.name, profile.avatar || null);
-}
-
-function render() {
-  const active = getActiveContact();
-  renderProfile();
-  renderContacts(searchInput.value);
-  renderHeader(active);
-  renderMessages(active);
-}
-
-function sendMessage() {
-  const active = getActiveContact();
-  if (!active) return;
+// Send message
+messageForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = state.activeContactId;
+  if (!id) return;
 
   const text = messageInput.value.trim();
   if (!text) return;
 
-  active.messages.push({ from: "me", text, time: nowTime(), seen: false });
+  const msg = { text, time: nowTime(), me: true };
+
+  if (!state.messagesByContact[id]) state.messagesByContact[id] = [];
+  state.messagesByContact[id].push(msg);
+
+  saveMessages(state.messagesByContact);
+
   messageInput.value = "";
-  saveState();
-  render();
-
-  // Fake auto-reply + seen status
-  setTimeout(() => {
-    const last = active.messages[active.messages.length - 1];
-    if (last && last.from === "me") last.seen = true;
-
-    active.messages.push({
-      from: "you",
-      text: "Got it 👍 (demo reply)",
-      time: nowTime(),
-      seen: true
-    });
-
-    saveState();
-    render();
-  }, 700);
-}
-
-/* EVENTS */
-sendBtn.addEventListener("click", sendMessage);
-messageInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") sendMessage();
+  renderMessages();
 });
 
-deleteChatBtn.addEventListener("click", () => {
-  const active = getActiveContact();
-  if (!active) return;
-  active.messages = [];
-  saveState();
-  render();
+// Clear chat
+clearChatBtn.addEventListener("click", () => {
+  const id = state.activeContactId;
+  if (!id) return;
+
+  state.messagesByContact[id] = [];
+  saveMessages(state.messagesByContact);
+  renderMessages();
 });
 
-searchInput.addEventListener("input", () => {
-  renderContacts(searchInput.value);
-});
-
-clearAllBtn.addEventListener("click", () => {
-  if (!confirm("Clear all chats?")) return;
-  state.contacts.forEach(c => c.messages = []);
-  saveState();
-  render();
-});
-
-toggleSidebarBtn.addEventListener("click", () => {
-  sidebar.classList.toggle("open");
-});
-
-newChatBtn.addEventListener("click", () => {
-  modalBackdrop.hidden = false;
-  newName.value = "";
-  newStatus.value = "";
-  newName.focus();
-});
-
-cancelModal.addEventListener("click", () => {
-  modalBackdrop.hidden = true;
-});
-
-modalBackdrop.addEventListener("click", (e) => {
-  if (e.target === modalBackdrop) modalBackdrop.hidden = true;
-});
-
-saveContact.addEventListener("click", () => {
-  const name = newName.value.trim();
-  const status = newStatus.value.trim() || "New contact";
-  if (!name) return alert("Please enter a name.");
-
-  const id = "c" + Math.random().toString(16).slice(2, 8);
-  state.contacts.unshift({ id, name, status, avatar: null, messages: [] });
-  state.activeId = id;
-  saveState();
-  modalBackdrop.hidden = true;
-  render();
-});
-
-/* LOGIN */
-function showApp() {
-  loginScreen.classList.add("hidden");
-  appRoot.classList.remove("hidden");
-  render();
-}
-function showLogin() {
-  appRoot.classList.add("hidden");
-  loginScreen.classList.remove("hidden");
-}
-
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-loginForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-
-  const name = profileName.value.trim();
-  if (!name) return;
-
-  const status = profileStatus.value.trim();
-  let avatar = null;
-
-  const file = profileAvatar.files?.[0];
-  if (file) {
-    avatar = await fileToDataUrl(file);
-  }
-
-  saveProfile({ name, status, avatar });
-  showApp();
-});
-
-logoutBtn.addEventListener("click", () => {
-  if (!confirm("Logout?")) return;
-  localStorage.removeItem(PROFILE_KEY);
-  showLogin();
-});
-
-/* INIT */
-(function init() {
-  const profile = loadProfile();
-  if (profile && profile.name) {
-    showApp();
-  } else {
-    showLogin();
-  }
-})();
+// ====== START ======
+boot();

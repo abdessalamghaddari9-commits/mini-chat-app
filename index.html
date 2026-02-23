@@ -10,115 +10,119 @@
 
   <!-- LOGIN SCREEN -->
   <section class="login" id="loginScreen">
-    <div class="login-card">
-      <div class="login-brand">
+    <div class="card">
+      <div class="brand">
         <span class="dot"></span>
         <span class="brand-name">MiniChat</span>
       </div>
 
-      <h1>Sign in</h1>
-      <p class="muted">Create your profile to start chatting (demo).</p>
+      <h1 class="title">Sign in</h1>
 
-      <form id="loginForm" class="login-form">
+      <form id="profileForm" class="form">
         <label>
           Your Name
-          <input id="profileName" type="text" placeholder="e.g. Abdessalam" autocomplete="name" required />
+          <input type="text" id="profileName" placeholder="e.g. Abdessalam" required />
         </label>
 
         <label>
           Your Status
-          <input id="profileStatus" type="text" placeholder="e.g. Available" />
+          <input type="text" id="profileStatus" placeholder="e.g. Online" required />
         </label>
 
-        <label>
-          Avatar
-          <input id="profileAvatar" type="file" accept="image/*" />
-        </label>
+        <button class="btn primary" type="submit">Enter MiniChat</button>
 
-        <button class="send-btn" type="submit">Enter MiniChat</button>
+        <p class="hint">Your profile is saved in your browser (LocalStorage).</p>
       </form>
-
-      <p class="hint">Your profile is saved in your browser (LocalStorage).</p>
     </div>
   </section>
 
   <!-- APP -->
   <div class="app hidden" id="appRoot">
-    <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
-      <div class="side-top">
-        <div class="brand">
-          <span class="dot"></span>
-          <span class="brand-name">MiniChat</span>
+    <header class="topbar">
+      <div class="brand small">
+        <span class="dot"></span>
+        <span class="brand-name">MiniChat</span>
+      </div>
+
+      <div class="profile">
+        <div class="avatar" id="avatar">A</div>
+        <div class="profile-info">
+          <div class="profile-name" id="userName">User</div>
+          <div class="profile-status" id="userStatus">Online</div>
         </div>
 
-        <div class="top-actions">
-          <button class="icon-btn" id="newChatBtn" title="New contact">＋</button>
-          <button class="icon-btn" id="logoutBtn" title="Logout">⎋</button>
+        <button class="btn ghost" id="addContactBtn" type="button">+ New Contact</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <h2>Contacts</h2>
+          <small id="contactsCount">0</small>
         </div>
-      </div>
 
-      <div class="me">
-        <div class="avatar me-avatar" id="meAvatar">U</div>
-        <div class="me-meta">
-          <div class="me-name" id="meName">User</div>
-          <div class="me-status" id="meStatus">—</div>
+        <div class="contacts" id="contactsList">
+          <!-- contacts injected -->
         </div>
-      </div>
+      </aside>
 
-      <div class="search">
-        <input id="searchInput" type="text" placeholder="Search contacts..." />
-      </div>
-
-      <div class="contacts" id="contacts"></div>
-
-      <div class="side-bottom">
-        <button class="ghost-btn" id="clearAllBtn">Clear all chats</button>
-      </div>
-    </aside>
-
-    <!-- Chat -->
-    <main class="chat">
-      <header class="chat-top" id="chatTop">
-        <div class="chat-user">
-          <div class="avatar" id="chatAvatar">A</div>
-          <div class="chat-meta">
-            <div class="chat-name" id="chatName">Select a contact</div>
-            <div class="chat-status" id="chatStatus">—</div>
+      <section class="chat">
+        <div class="chat-head">
+          <div class="chat-title">
+            <div class="chat-avatar" id="activeAvatar">?</div>
+            <div>
+              <div class="chat-name" id="activeName">Select a contact</div>
+              <div class="chat-sub" id="activeSub">Start chatting</div>
+            </div>
           </div>
+
+          <button class="btn ghost" id="clearChatBtn" type="button">Clear Chat</button>
         </div>
 
-        <div class="chat-actions">
-          <button class="icon-btn" id="toggleSidebarBtn" title="Contacts">☰</button>
-          <button class="icon-btn" id="deleteChatBtn" title="Delete chat" disabled>🗑</button>
-        </div>
-      </header>
+        <div class="messages" id="messages"></div>
 
-      <section class="messages" id="messages">
-        <div class="empty">
-          <h2>Welcome 👋</h2>
-          <p>Select a contact to start chatting.</p>
-        </div>
+        <form class="composer" id="messageForm">
+          <input
+            type="text"
+            id="messageInput"
+            placeholder="Type a message..."
+            autocomplete="off"
+            required
+            disabled
+          />
+          <button class="btn primary" type="submit" id="sendBtn" disabled>Send</button>
+        </form>
+
+        <p class="hint center">Messages are saved in your browser (LocalStorage).</p>
       </section>
-
-      <footer class="composer">
-        <input id="messageInput" type="text" placeholder="Type a message..." disabled />
-        <button class="send-btn" id="sendBtn" disabled>Send</button>
-      </footer>
     </main>
   </div>
 
-  <!-- Modal: add new contact -->
-  <div class="modal-backdrop" id="modalBackdrop" hidden>
-    <div class="modal">
-      <h3>New Contact</h3>
-      <input id="newName" type="text" placeholder="Name (e.g. Sara)" />
-      <input id="newStatus" type="text" placeholder="Status (e.g. Online)" />
-      <div class="modal-actions">
-        <button class="ghost-btn" id="cancelModal">Cancel</button>
-        <button class="send-btn" id="saveContact">Save</button>
-      </div>
-      <p class="hint">Messages are saved in your browser (LocalStorage).</p>
+  <!-- MODAL BACKDROP -->
+  <div class="modal-backdrop hidden" id="modalBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h3 id="modalTitle">New Contact</h3>
+
+      <form id="contactForm" class="form">
+        <label>
+          Name
+          <input type="text" id="contactName" placeholder="Name (e.g. Sara)" required />
+        </label>
+
+        <label>
+          Status
+          <input type="text" id="contactStatus" placeholder="Status (e.g. Online)" required />
+        </label>
+
+        <div class="row">
+          <!-- مهم: type="button" باش Cancel ما يديرش submit -->
+          <button class="btn" type="button" id="cancelBtn">Cancel</button>
+          <button class="btn primary" type="submit" id="saveBtn">Save</button>
+        </div>
+
+        <p class="hint">Messages are saved in your browser (LocalStorage).</p>
+      </form>
     </div>
   </div>
 
