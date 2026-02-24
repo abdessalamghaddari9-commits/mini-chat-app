@@ -1,6 +1,16 @@
-// app.js (Firebase + Firestore) — خاص index.html يكون فيه: <script type="module" src="app.js"></script>
+// app.js — Firebase Auth + Firestore (WhatsApp-like simple room)
+// IMPORTANT: index.html لازم فيه: <script type="module" src="app.js"></script>
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+
+import {
+  getAuth,
+  onAuthStateChanged,
+  signOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
 import {
   getFirestore,
   collection,
@@ -8,7 +18,10 @@ import {
   serverTimestamp,
   query,
   orderBy,
-  onSnapshot
+  onSnapshot,
+  deleteDoc,
+  doc,
+  getDocs
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 // ✅ Firebase config ديالك
@@ -22,6 +35,7 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getFirestore(app);
 
 // --------- DOM ----------
@@ -71,13 +85,6 @@ function escapeHtml(str) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
-}
-
-// ✅ chatId ثابت بين جوج ناس (باش يولي بحال WhatsApp rooms)
-function chatIdFor(a, b) {
-  const A = (a || "").trim().toLowerCase();
-  const B = (b || "").trim().toLowerCase();
-  return [A, B].sort().join("__");
 }
 
 function showModal() {
@@ -149,27 +156,20 @@ function setActiveContact(id) {
   sendBtn.disabled = false;
 
   renderContacts();
-
-  // ✅ هنا كنبدلو الغرفة حسب contact
-  startMessagesListener(c.chatId);
 }
 
-// --------- Firestore: Messages per room ----------
+// --------- Firestore: Messages (global room: /chats) ----------
 let unsubMessages = null;
 
-function startMessagesListener(chatId) {
-  if (!chatId) return;
-
-  // chats/{chatId}/messages
-  const msgsRef = collection(db, "chats", chatId, "messages");
-  const q = query(msgsRef, orderBy("createdAt", "asc"));
+function startMessagesListener() {
+  const q = query(collection(db, "chats"), orderBy("createdAt", "asc"));
 
   if (unsubMessages) unsubMessages();
   unsubMessages = onSnapshot(q, (snap) => {
     messagesEl.innerHTML = "";
 
-    snap.forEach((doc) => {
-      const m = doc.data();
+    snap.forEach((d) => {
+      const m = d.data();
       const mine = (m.sender || "") === (profile?.name || "");
       const div = document.createElement("div");
       div.className = "msg " + (mine ? "me" : "them");
@@ -196,18 +196,46 @@ async function sendMessage(text) {
   const clean = (text || "").trim();
   if (!clean) return;
 
-  const c = contacts.find((x) => x.id === activeContactId);
-  if (!c?.chatId) return;
-
-  const msgsRef = collection(db, "chats", c.chatId, "messages");
-  await addDoc(msgsRef, {
+  await addDoc(collection(db, "chats"), {
     text: clean,
-    sender: profile?.name || "Anonymous",
+    sender: profile?.name || auth.currentUser?.email || "Anonymous",
     createdAt: serverTimestamp()
   });
 }
 
-// --------- App start ----------
+// --------- Auth Helpers ----------
+// حنا غادي نديرو Sign-in حقيقي ب Email/Password لكن UI ديالك فيه Name/Status
+// ✅ كنحوّلو Name ل Email وهمي باش تخدم Auth بلا ما نبدلو الواجهة دابا:
+// مثال: Abdessalam => abdessalam@minichat.local
+function nameToEmail(name) {
+  const clean = (name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9._-]/g, "");
+  return `${clean || "user"}@minichat.local`;
+}
+
+// password ثابت باش نجربو (تقدر تبدلو من بعد)
+const DEFAULT_PASS = "12345678";
+
+// حاول نسجل، إذا كان مسجل من قبل ندير login
+async function signupOrLoginByName(name) {
+  const email = nameToEmail(name);
+
+  try {
+    await createUserWithEmailAndPassword(auth, email, DEFAULT_PASS);
+  } catch (e) {
+    // إذا كان موجود من قبل
+    if (e?.code === "auth/email-already-in-use") {
+      await signInWithEmailAndPassword(auth, email, DEFAULT_PASS);
+    } else {
+      throw e;
+    }
+  }
+}
+
+// --------- App Start ----------
 function enterApp() {
   loginScreen.classList.add("hidden");
   appRoot.classList.remove("hidden");
@@ -217,46 +245,61 @@ function enterApp() {
   avatar.textContent = initials(profile.name);
 
   loadContacts();
-
-  // ✅ أول مرة: كنزيدو Contact عام "General" بغرفة ثابتة
-  if (contacts.length === 0) {
-    contacts.push({
-      id: crypto.randomUUID(),
-      name: "General Chat",
-      status: "Public room",
-      chatId: "general"
-    });
-    saveContacts();
-  }
-
   renderContacts();
 
+  if (contacts.length === 0) {
+    contacts.push({ id: crypto.randomUUID(), name: "General Chat", status: "Public room" });
+    saveContacts();
+    renderContacts();
+  }
+
   if (!activeContactId) setActiveContact(contacts[0].id);
+
+  startMessagesListener();
 }
 
-// Load profile if exists
+// Load profile from LocalStorage
 try {
   profile = JSON.parse(localStorage.getItem(LS_PROFILE) || "null");
 } catch {
   profile = null;
 }
 
-if (profile?.name) {
-  enterApp();
-}
+// Auth state listener
+onAuthStateChanged(auth, (user) => {
+  // إذا user موجود و profile موجود -> دخل
+  if (user && profile?.name) {
+    enterApp();
+    return;
+  }
+
+  // إذا ماكاينش user -> رجع ل login screen
+  appRoot.classList.add("hidden");
+  loginScreen.classList.remove("hidden");
+
+  // تعطيل الإرسال حتى تختار contact و تدخل
+  messageInput.disabled = true;
+  sendBtn.disabled = true;
+});
 
 // --------- Events ----------
-profileForm.addEventListener("submit", (e) => {
+profileForm.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   const name = profileName.value.trim();
   const status = profileStatus.value.trim();
   if (!name || !status) return;
 
+  // خزّن profile
   profile = { name, status };
   localStorage.setItem(LS_PROFILE, JSON.stringify(profile));
 
-  enterApp();
+  // ✅ دير Auth حقيقي (signup/login)
+  try {
+    await signupOrLoginByName(name);
+  } catch (err) {
+    alert("Auth error: " + (err?.message || err));
+  }
 });
 
 messageForm.addEventListener("submit", async (e) => {
@@ -290,23 +333,33 @@ contactForm.addEventListener("submit", (e) => {
   const status = contactStatus.value.trim();
   if (!name || !status) return;
 
-  // ✅ كل Contact عندو room ديالو
-  const chatId = chatIdFor(profile?.name || "me", name);
-
-  contacts.push({
-    id: crypto.randomUUID(),
-    name,
-    status,
-    chatId
-  });
-
+  contacts.push({ id: crypto.randomUUID(), name, status });
   saveContacts();
   hideModal();
   renderContacts();
 });
 
-clearChatBtn.addEventListener("click", () => {
-  // ✅ ما كنمسحوش Firestore باش ما نحيدوش الرسائل على الجميع
-  // غير كنفرغو العرض (UI)
-  messagesEl.innerHTML = "";
+// Clear chat: نحيدو الرسائل من Firestore (اختياري)
+// إذا بغيتي غير يمسح من الشاشة فقط، قولّي ونبدلوها
+clearChatBtn.addEventListener("click", async () => {
+  const ok = confirm("واش بغيتي تمسح جميع الرسائل من Firestore؟ (غادي تتحيد عند الناس كاملين)");
+  if (!ok) return;
+
+  try {
+    const snap = await getDocs(collection(db, "chats"));
+    const promises = [];
+    snap.forEach((d) => promises.push(deleteDoc(doc(db, "chats", d.id))));
+    await Promise.all(promises);
+  } catch (err) {
+    alert("Delete error: " + (err?.message || err));
+  }
 });
+
+// OPTIONAL: إذا بغيتي زر logout فـ UI من بعد، نقدر نزيدوه
+window.minichatLogout = async function () {
+  try {
+    await signOut(auth);
+  } catch (err) {
+    alert("Logout error: " + (err?.message || err));
+  }
+};
