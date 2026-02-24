@@ -1,4 +1,4 @@
-// app.js (Firebase Auth + Firestore private 1-1 chats + last message preview)
+// app.js — Firebase Auth + Firestore (private 1-1 WhatsApp-like basics)
 // MUST be loaded as type="module" in index.html
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
@@ -25,6 +25,9 @@ import {
   where,
   getDocs,
   updateDoc,
+  runTransaction,
+  increment,
+  deleteDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 // ✅ Firebase config ديالك
@@ -81,6 +84,7 @@ const contactsCount = document.getElementById("contactsCount");
 const activeAvatar = document.getElementById("activeAvatar");
 const activeName = document.getElementById("activeName");
 const activeSub = document.getElementById("activeSub");
+const typingIndicator = document.getElementById("typingIndicator");
 const clearChatBtn = document.getElementById("clearChatBtn");
 
 // ---------- Helpers ----------
@@ -103,16 +107,6 @@ function setAuthMessage(msg = "", isError = false) {
   authMsg.style.opacity = msg ? "1" : "0";
   authMsg.style.color = isError ? "#ffb4b4" : "";
 }
-function fmtTime(ts) {
-  try {
-    const d = ts?.toDate?.();
-    if (!d) return "";
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
-
 function showLogin() {
   authTitle.textContent = "Sign in";
   loginForm.classList.remove("hidden");
@@ -125,8 +119,6 @@ function showRegister() {
   registerForm.classList.remove("hidden");
   setAuthMessage("");
 }
-
-// Modal
 function showModal() {
   modalBackdrop.classList.remove("hidden");
   modalBackdrop.setAttribute("aria-hidden", "false");
@@ -137,20 +129,41 @@ function hideModal() {
   modalBackdrop.setAttribute("aria-hidden", "true");
   contactForm.reset();
 }
+function timeShort(ts) {
+  try {
+    const d = ts?.toDate?.() ? ts.toDate() : null;
+    if (!d) return "";
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+function lastSeenText(userDoc) {
+  if (!userDoc) return "";
+  if (userDoc.status === "Online") return "Online";
+  if (userDoc.lastActive?.toDate) {
+    return "Last seen: " + userDoc.lastActive.toDate().toLocaleString();
+  }
+  return "Offline";
+}
 
-// ---------- Chat State ----------
+// ---------- State ----------
 let activeConversationId = null;
+let activeOtherUid = null;
+
 let unsubMessages = null;
 let unsubConversations = null;
+let unsubTyping = null;
 
-// cache users data
-const usersCache = new Map();
+const usersCache = new Map(); // uid -> userDoc
+let myUid = null;
 
+// ---------- IDs / helpers ----------
 function makeConversationId(uidA, uidB) {
   return [uidA, uidB].sort().join("_");
 }
 
-// ✅ email lowercase فـ users doc
+// ---------- Users collection ----------
 async function ensureMyUserDoc(user) {
   const ref = doc(db, "users", user.uid);
   const payload = {
@@ -158,10 +171,22 @@ async function ensureMyUserDoc(user) {
     email: (user.email || "").toLowerCase(),
     displayName: user.displayName || "",
     status: "Online",
+    lastActive: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
   await setDoc(ref, payload, { merge: true });
   usersCache.set(user.uid, payload);
+}
+
+async function setMyPresence(status) {
+  const u = auth.currentUser;
+  if (!u) return;
+  const ref = doc(db, "users", u.uid);
+  await setDoc(
+    ref,
+    { status, lastActive: serverTimestamp(), updatedAt: serverTimestamp() },
+    { merge: true }
+  );
 }
 
 async function getUserByEmail(email) {
@@ -178,6 +203,7 @@ async function getUserByEmail(email) {
 }
 
 async function getUserByUid(uid) {
+  if (!uid) return null;
   if (usersCache.has(uid)) return usersCache.get(uid);
 
   const ref = doc(db, "users", uid);
@@ -189,7 +215,7 @@ async function getUserByUid(uid) {
   return d;
 }
 
-// ---------- Conversations list ----------
+// ---------- UI: conversations list ----------
 function renderConversations(items) {
   contactsList.innerHTML = "";
   contactsCount.textContent = String(items.length);
@@ -204,21 +230,25 @@ function renderConversations(items) {
     btn.type = "button";
     btn.className = "contact " + (it.id === activeConversationId ? "active" : "");
 
-    const time = it.lastAt ? fmtTime(it.lastAt) : "";
-    const sub = it.lastMessage ? it.lastMessage : (it.sub || "");
+    const unreadHtml = it.unread > 0
+      ? `<span class="unread-badge">${it.unread}</span>`
+      : "";
 
     btn.innerHTML = `
       <div class="contact-avatar">${escapeHtml(initials(it.title))}</div>
       <div class="contact-meta">
-        <div class="contact-name" style="display:flex;justify-content:space-between;gap:10px;">
-          <span>${escapeHtml(it.title)}</span>
-          <small style="opacity:.7;">${escapeHtml(time)}</small>
+        <div class="contact-row">
+          <div class="contact-name">${escapeHtml(it.title)}</div>
+          <div class="contact-time">${escapeHtml(it.time || "")}</div>
         </div>
-        <div class="contact-sub">${escapeHtml(sub || "")}</div>
+        <div class="contact-row">
+          <div class="contact-sub">${escapeHtml(it.sub || "")}</div>
+          ${unreadHtml}
+        </div>
       </div>
     `;
 
-    btn.addEventListener("click", () => setActiveConversation(it.id, it));
+    btn.addEventListener("click", () => setActiveConversation(it.id, it.otherUid, it));
     contactsList.appendChild(btn);
   });
 }
@@ -226,7 +256,10 @@ function renderConversations(items) {
 async function listenMyConversations(user) {
   if (unsubConversations) unsubConversations();
 
-  const q = query(collection(db, "conversations"), where("members", "array-contains", user.uid));
+  const q = query(
+    collection(db, "conversations"),
+    where("members", "array-contains", user.uid)
+  );
 
   unsubConversations = onSnapshot(q, async (snap) => {
     const items = [];
@@ -234,44 +267,118 @@ async function listenMyConversations(user) {
     for (const d of snap.docs) {
       const conv = d.data();
       const otherUid = (conv.members || []).find((x) => x !== user.uid);
+
       const other = otherUid ? await getUserByUid(otherUid) : null;
+
+      const unread = Number(conv.unread?.[user.uid] || 0);
+      const lastMsg = conv.lastMessage || "";
+      const lastAt = conv.lastMessageAt || null;
 
       items.push({
         id: d.id,
-        title: other?.displayName || other?.email || "Unknown",
-        sub: other?.status || "",
         otherUid,
-        lastMessage: conv.lastMessage || "",
-        lastAt: conv.lastAt || null,
+        title: other?.displayName || other?.email || "Unknown",
+        sub: lastMsg ? lastMsg : (other?.status || ""),
+        time: lastAt ? timeShort(lastAt) : "",
+        unread,
+        lastAtSort: lastAt?.toMillis ? lastAt.toMillis() : 0,
       });
     }
 
-    // ✅ ترتيب حسب lastAt (الأحدث فوق)
-    items.sort((a, b) => {
-      const ta = a.lastAt?.toMillis?.() || 0;
-      const tb = b.lastAt?.toMillis?.() || 0;
-      return tb - ta;
-    });
+    // sort: latest message desc
+    items.sort((a, b) => (b.lastAtSort || 0) - (a.lastAtSort || 0));
 
     renderConversations(items);
 
+    // Auto-open first chat
     if (!activeConversationId && items[0]) {
-      setActiveConversation(items[0].id, items[0]);
+      setActiveConversation(items[0].id, items[0].otherUid, items[0]);
     }
   });
 }
 
-function setActiveConversation(conversationId, info) {
+async function setActiveConversation(conversationId, otherUid, info) {
   activeConversationId = conversationId;
+  activeOtherUid = otherUid;
 
-  activeAvatar.textContent = initials(info?.title || "?");
-  activeName.textContent = info?.title || "Chat";
-  activeSub.textContent = info?.sub || "";
+  const other = otherUid ? await getUserByUid(otherUid) : null;
+
+  activeAvatar.textContent = initials(info?.title || other?.displayName || other?.email || "?");
+  activeName.textContent = info?.title || other?.displayName || other?.email || "Chat";
+  activeSub.textContent = lastSeenText(other);
+  typingIndicator?.classList.add("hidden");
 
   messageInput.disabled = false;
   sendBtn.disabled = false;
 
+  await markConversationRead(conversationId);
+
+  startTypingListener(conversationId, otherUid);
   startMessagesListener(conversationId);
+}
+
+// ---------- Read/Unread + Clear Chat (for me) ----------
+async function markConversationRead(conversationId) {
+  const u = auth.currentUser;
+  if (!u || !conversationId) return;
+
+  const convRef = doc(db, "conversations", conversationId);
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(convRef);
+    if (!snap.exists()) return;
+
+    tx.update(convRef, {
+      [`unread.${u.uid}`]: 0,
+      [`lastReadAt.${u.uid}`]: serverTimestamp(),
+    });
+  });
+}
+
+async function clearChatForMe(conversationId) {
+  const u = auth.currentUser;
+  if (!u || !conversationId) return;
+
+  const convRef = doc(db, "conversations", conversationId);
+  await updateDoc(convRef, {
+    [`clearedAt.${u.uid}`]: serverTimestamp(),
+  });
+}
+
+// ---------- Typing ----------
+let typingTimer = null;
+
+async function setTyping(isTyping) {
+  const u = auth.currentUser;
+  if (!u || !activeConversationId) return;
+
+  const typingRef = doc(db, "conversations", activeConversationId, "typing", u.uid);
+
+  if (isTyping) {
+    await setDoc(
+      typingRef,
+      { typing: true, updatedAt: serverTimestamp(), uid: u.uid },
+      { merge: true }
+    );
+  } else {
+    // easiest: delete doc
+    try { await deleteDoc(typingRef); } catch {}
+  }
+}
+
+function startTypingListener(conversationId, otherUid) {
+  if (unsubTyping) unsubTyping();
+  if (!conversationId || !otherUid) return;
+
+  const otherTypingRef = doc(db, "conversations", conversationId, "typing", otherUid);
+  unsubTyping = onSnapshot(otherTypingRef, (snap) => {
+    const data = snap.exists() ? snap.data() : null;
+    const isTyping = !!data?.typing;
+    if (!typingIndicator) return;
+
+    if (isTyping) typingIndicator.classList.remove("hidden");
+    else typingIndicator.classList.add("hidden");
+  });
 }
 
 // ---------- Messages ----------
@@ -283,12 +390,29 @@ function startMessagesListener(conversationId) {
   const msgsRef = collection(db, "conversations", conversationId, "messages");
   const q = query(msgsRef, orderBy("createdAt", "asc"));
 
-  unsubMessages = onSnapshot(q, (snap) => {
+  const convRef = doc(db, "conversations", conversationId);
+
+  unsubMessages = onSnapshot(q, async (snap) => {
     messagesEl.innerHTML = "";
+
     const me = auth.currentUser;
+
+    // get clearedAt for me (to hide old msgs only for me)
+    let clearedAtMillis = 0;
+    try {
+      const convSnap = await getDoc(convRef);
+      const conv = convSnap.exists() ? convSnap.data() : null;
+      const clearedAt = conv?.clearedAt?.[me?.uid];
+      if (clearedAt?.toMillis) clearedAtMillis = clearedAt.toMillis();
+    } catch {}
 
     snap.forEach((docSnap) => {
       const m = docSnap.data();
+      const createdMillis = m.createdAt?.toMillis ? m.createdAt.toMillis() : 0;
+
+      // hide messages older than my clearedAt
+      if (clearedAtMillis && createdMillis && createdMillis < clearedAtMillis) return;
+
       const mine = me && m.senderUid === me.uid;
 
       const div = document.createElement("div");
@@ -305,6 +429,7 @@ function startMessagesListener(conversationId) {
           <div class="meta">${escapeHtml(m.senderName || m.senderEmail || "")}${date ? " • " + escapeHtml(date) : ""}</div>
         </div>
       `;
+
       messagesEl.appendChild(div);
     });
 
@@ -317,24 +442,41 @@ async function sendMessage(text) {
   if (!clean) return;
 
   const u = auth.currentUser;
-  if (!u) return alert("You must be logged in.");
-  if (!activeConversationId) return alert("Select a chat first.");
+  if (!u) {
+    alert("You must be logged in.");
+    return;
+  }
+  if (!activeConversationId || !activeOtherUid) {
+    alert("Select a chat first.");
+    return;
+  }
 
+  const convRef = doc(db, "conversations", activeConversationId);
   const msgsRef = collection(db, "conversations", activeConversationId, "messages");
 
-  // 1) زيد المسج
-  await addDoc(msgsRef, {
-    text: clean,
-    createdAt: serverTimestamp(),
-    senderUid: u.uid,
-    senderEmail: (u.email || "").toLowerCase(),
-    senderName: u.displayName || "",
-  });
+  await runTransaction(db, async (tx) => {
+    const convSnap = await tx.get(convRef);
+    if (!convSnap.exists()) throw new Error("Conversation not found.");
 
-  // 2) حدّث conversation باش يبان last message فـ contacts
-  await updateDoc(doc(db, "conversations", activeConversationId), {
-    lastMessage: clean,
-    lastAt: serverTimestamp(),
+    // add message
+    const msgRef = doc(msgsRef); // auto id
+    tx.set(msgRef, {
+      text: clean,
+      createdAt: serverTimestamp(),
+      senderUid: u.uid,
+      senderEmail: (u.email || "").toLowerCase(),
+      senderName: u.displayName || "",
+    });
+
+    // update conversation metadata + unread counts
+    tx.update(convRef, {
+      lastMessage: clean,
+      lastMessageAt: serverTimestamp(),
+      lastSenderUid: u.uid,
+      [`unread.${activeOtherUid}`]: increment(1),
+      [`unread.${u.uid}`]: 0,
+      [`lastReadAt.${u.uid}`]: serverTimestamp(),
+    });
   });
 }
 
@@ -345,7 +487,7 @@ async function createChatWithEmail(friendEmail) {
 
   const friend = await getUserByEmail(friendEmail);
   if (!friend) {
-    alert("هاد الإيميل ما لقيتوش. خاص صاحبك يسجل/يدير login مرة وحدة.");
+    alert("هاد الإيميل ما لقيتوش فـ Users. خاص صاحبك يسجل فالتطبيق مرة وحدة.");
     return;
   }
   if (friend.uid === u.uid) {
@@ -362,11 +504,15 @@ async function createChatWithEmail(friendEmail) {
       members: [u.uid, friend.uid],
       createdAt: serverTimestamp(),
       lastMessage: "",
-      lastAt: serverTimestamp(),
+      lastMessageAt: serverTimestamp(),
+      unread: { [u.uid]: 0, [friend.uid]: 0 },
+      lastReadAt: { [u.uid]: serverTimestamp(), [friend.uid]: serverTimestamp() },
+      clearedAt: {},
     });
   }
 
   hideModal();
+  // list listener will show it automatically
 }
 
 // ---------- UI state ----------
@@ -392,13 +538,30 @@ function exitApp() {
   sendBtn.disabled = true;
 
   if (unsubMessages) unsubMessages();
-  if (unsubConversations) unsubConversations();
-
   unsubMessages = null;
+
+  if (unsubConversations) unsubConversations();
   unsubConversations = null;
+
+  if (unsubTyping) unsubTyping();
+  unsubTyping = null;
+
   activeConversationId = null;
+  activeOtherUid = null;
 
   showLogin();
+}
+
+// ---------- Presence: online/offline simple ----------
+function setupPresenceHooks() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") setMyPresence("Online");
+    else setMyPresence("Offline");
+  });
+  window.addEventListener("beforeunload", () => {
+    // best effort
+    setMyPresence("Offline");
+  });
 }
 
 // ---------- Auth events ----------
@@ -416,6 +579,7 @@ registerForm.addEventListener("submit", async (e) => {
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     await updateProfile(cred.user, { displayName: name });
+    await ensureMyUserDoc(cred.user);
     setAuthMessage("Account created ✅");
   } catch (err) {
     setAuthMessage(err?.message || String(err), true);
@@ -439,6 +603,7 @@ loginForm.addEventListener("submit", async (e) => {
 
 logoutBtn.addEventListener("click", async () => {
   try {
+    await setMyPresence("Offline");
     await signOut(auth);
   } catch (err) {
     alert(err?.message || err);
@@ -447,10 +612,16 @@ logoutBtn.addEventListener("click", async () => {
 
 onAuthStateChanged(auth, async (user) => {
   if (user) {
+    myUid = user.uid;
+
     await ensureMyUserDoc(user);
+    await setMyPresence("Online");
+    setupPresenceHooks();
+
     enterApp(user);
     await listenMyConversations(user);
   } else {
+    myUid = null;
     exitApp();
   }
 });
@@ -467,7 +638,30 @@ messageForm.addEventListener("submit", async (e) => {
     await sendMessage(text);
   } catch (err) {
     alert("Firestore error: " + (err?.message || err));
+  } finally {
+    // stop typing quickly
+    setTyping(false);
   }
+});
+
+// Enter send + Shift+Enter new line (for input: we simulate by preventing submit if shift)
+messageInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    messageForm.requestSubmit();
+  }
+});
+
+// typing detection
+messageInput.addEventListener("input", () => {
+  if (!activeConversationId) return;
+
+  setTyping(true);
+
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => {
+    setTyping(false);
+  }, 900);
 });
 
 addContactBtn.addEventListener("click", showModal);
@@ -488,6 +682,12 @@ contactForm.addEventListener("submit", async (e) => {
   }
 });
 
-clearChatBtn.addEventListener("click", () => {
-  messagesEl.innerHTML = "";
+clearChatBtn.addEventListener("click", async () => {
+  if (!activeConversationId) return;
+  try {
+    await clearChatForMe(activeConversationId);
+    messagesEl.innerHTML = "";
+  } catch (err) {
+    alert(err?.message || err);
+  }
 });

@@ -63,7 +63,7 @@
         </p>
       </form>
 
-      <p class="hint center" id="authMsg" style="margin-top:10px; opacity:0;"></p>
+      <p class="hint center" id="authMsg" style="margin-top:10px;"></p>
     </div>
   </section>
 
@@ -103,7 +103,10 @@
             <div class="chat-avatar" id="activeAvatar">?</div>
             <div>
               <div class="chat-name" id="activeName">Select a contact</div>
-              <div class="chat-sub" id="activeSub">Start chatting</div>
+              <div class="chat-sub">
+                <span id="activeSub">Start chatting</span>
+                <span id="typingIndicator" class="typing hidden"> • typing…</span>
+              </div>
             </div>
           </div>
 
@@ -137,7 +140,7 @@
       <form id="contactForm" class="form">
         <label>
           Friend Email
-          <input type="email" id="contactEmail" placeholder="e.g. friend@gmail.com" required />
+          <input type="email" id="contactEmail" placeholder="friend@gmail.com" required />
         </label>
 
         <div class="row">
@@ -145,7 +148,9 @@
           <button class="btn primary" type="submit" id="saveBtn">Save</button>
         </div>
 
-        <p class="hint">Important: your friend must create an account first, then you add his email.</p>
+        <p class="hint">
+          Important: your friend must create an account first, then you add his email.
+        </p>
       </form>
     </div>
   </div>
