@@ -1,9 +1,38 @@
-// ====== STORAGE KEYS ======
-const LS_PROFILE = "minichat_profile_v1";
-const LS_CONTACTS = "minichat_contacts_v1";
-const LS_MESSAGES = "minichat_messages_v1"; // object: { contactId: [ {text, time, me} ] }
+// app.js (Firebase + Firestore real-time) ✅
 
-// ====== ELEMENTS ======
+// ---------- Firebase imports (Web SDK v10) ----------
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  setDoc,
+  doc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  serverTimestamp,
+  query,
+  where,
+  orderBy,
+  onSnapshot
+} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
+// ---------- Your Firebase config ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyBoeizt2D9twwxyRdUNxLQZPk065Y017F8",
+  authDomain: "mini-chat-app-95448.firebaseapp.com",
+  projectId: "mini-chat-app-95448",
+  storageBucket: "mini-chat-app-95448.firebasestorage.app",
+  messagingSenderId: "882567885761",
+  appId: "1:882567885761:web:8538107f864cacfbaeb540"
+};
+
+// ---------- Init ----------
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ---------- DOM ----------
 const loginScreen = document.getElementById("loginScreen");
 const appRoot = document.getElementById("appRoot");
 
@@ -11,9 +40,9 @@ const profileForm = document.getElementById("profileForm");
 const profileName = document.getElementById("profileName");
 const profileStatus = document.getElementById("profileStatus");
 
+const avatar = document.getElementById("avatar");
 const userName = document.getElementById("userName");
 const userStatus = document.getElementById("userStatus");
-const avatar = document.getElementById("avatar");
 
 const addContactBtn = document.getElementById("addContactBtn");
 const modalBackdrop = document.getElementById("modalBackdrop");
@@ -29,292 +58,331 @@ const activeAvatar = document.getElementById("activeAvatar");
 const activeName = document.getElementById("activeName");
 const activeSub = document.getElementById("activeSub");
 
-const messagesEl = document.getElementById("messages");
+const messagesBox = document.getElementById("messages");
 const messageForm = document.getElementById("messageForm");
 const messageInput = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
+
 const clearChatBtn = document.getElementById("clearChatBtn");
 
-// ====== STATE ======
-let state = {
-  profile: null,
-  contacts: [],
-  activeContactId: null,
-  messagesByContact: {} // {id: []}
-};
+// ---------- Helpers ----------
+function $(id) { return document.getElementById(id); }
 
-// ====== HELPERS ======
-function saveProfile(profile) {
-  localStorage.setItem(LS_PROFILE, JSON.stringify(profile));
-}
-function loadProfile() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_PROFILE));
-  } catch {
-    return null;
-  }
-}
-
-function saveContacts(contacts) {
-  localStorage.setItem(LS_CONTACTS, JSON.stringify(contacts));
-}
-function loadContacts() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_CONTACTS)) || [];
-  } catch {
-    return [];
-  }
-}
-
-function saveMessages(obj) {
-  localStorage.setItem(LS_MESSAGES, JSON.stringify(obj));
-}
-function loadMessages() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_MESSAGES)) || {};
-  } catch {
-    return {};
-  }
+function safeText(str) {
+  return (str || "").toString().trim();
 }
 
 function initials(name) {
-  const n = (name || "").trim();
+  const n = safeText(name);
   if (!n) return "?";
-  const parts = n.split(/\s+/);
-  const a = parts[0]?.[0] || "";
-  const b = parts.length > 1 ? parts[parts.length - 1][0] : "";
-  return (a + b).toUpperCase();
+  const parts = n.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] || "";
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
+  return (first + last).toUpperCase();
 }
 
-function nowTime() {
-  const d = new Date();
-  return d.toLocaleString();
-}
+function show(el) { el.classList.remove("hidden"); }
+function hide(el) { el.classList.add("hidden"); }
 
 function openModal() {
   modalBackdrop.classList.remove("hidden");
   modalBackdrop.setAttribute("aria-hidden", "false");
+  contactName.value = "";
+  contactStatus.value = "";
   contactName.focus();
 }
 
 function closeModal() {
-  // ✅ هذا هو الحل الحقيقي ديال Cancel:
-  contactForm.reset();
   modalBackdrop.classList.add("hidden");
   modalBackdrop.setAttribute("aria-hidden", "true");
 }
 
-function setActiveContact(id) {
-  state.activeContactId = id;
-
-  const c = state.contacts.find(x => x.id === id);
-  if (!c) return;
-
-  activeAvatar.textContent = initials(c.name);
-  activeName.textContent = c.name;
-  activeSub.textContent = c.status || "Online";
-
-  messageInput.disabled = false;
-  sendBtn.disabled = false;
-
-  renderContacts();
-  renderMessages();
+function scrollMessagesToBottom() {
+  messagesBox.scrollTop = messagesBox.scrollHeight;
 }
 
-function renderContacts() {
-  contactsCount.textContent = String(state.contacts.length);
+// ---------- State ----------
+let me = null; // { uid, name, status }
+let selectedContact = null; // { id, name, status }
+let unsubMessages = null; // onSnapshot unsubscribe
 
+// ---------- Firestore paths ----------
+function userDocRef(uid) {
+  return doc(db, "users", uid);
+}
+function contactsColRef(uid) {
+  return collection(db, "users", uid, "contacts");
+}
+function messagesColRef(uid) {
+  return collection(db, "users", uid, "messages");
+}
+
+// Conversation id = stable between 2 users
+function convoId(a, b) {
+  return [a, b].sort().join("__");
+}
+
+// ---------- Auth simulation (Email/Password enabled but UI simple) ----------
+// We keep it simple: create/read a user profile doc by a generated uid stored in localStorage.
+function getOrCreateUid() {
+  const key = "minichat_uid";
+  let uid = localStorage.getItem(key);
+  if (!uid) {
+    uid = "u_" + crypto.randomUUID();
+    localStorage.setItem(key, uid);
+  }
+  return uid;
+}
+
+// ---------- UI render ----------
+function renderMe() {
+  userName.textContent = me?.name || "User";
+  userStatus.textContent = me?.status || "Online";
+  avatar.textContent = initials(me?.name);
+}
+
+function renderContacts(contacts) {
   contactsList.innerHTML = "";
-  if (state.contacts.length === 0) {
+
+  contactsCount.textContent = String(contacts.length);
+
+  if (contacts.length === 0) {
     const empty = document.createElement("div");
-    empty.className = "hint";
+    empty.style.padding = "12px";
+    empty.style.opacity = "0.7";
     empty.textContent = "No contacts yet. Click “+ New Contact”.";
     contactsList.appendChild(empty);
     return;
   }
 
-  state.contacts.forEach(c => {
-    const item = document.createElement("div");
-    item.className = "contact" + (c.id === state.activeContactId ? " active" : "");
+  contacts.forEach(c => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "contact-item";
+    item.style.width = "100%";
+    item.style.textAlign = "left";
+    item.style.border = "0";
+    item.style.background = "transparent";
+    item.style.padding = "10px";
+    item.style.cursor = "pointer";
+
     item.innerHTML = `
-      <div class="c-avatar">${initials(c.name)}</div>
-      <div>
-        <div class="c-name">${c.name}</div>
-        <div class="c-status">${c.status || "Online"}</div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <div class="chat-avatar" style="width:36px;height:36px;display:grid;place-items:center;border-radius:10px;">
+          ${initials(c.name)}
+        </div>
+        <div style="min-width:0;">
+          <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.name}</div>
+          <div style="opacity:.75;font-size:.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.status || ""}</div>
+        </div>
       </div>
     `;
-    item.addEventListener("click", () => setActiveContact(c.id));
+
+    item.addEventListener("click", () => selectContact(c));
     contactsList.appendChild(item);
   });
 }
 
-function renderMessages() {
-  messagesEl.innerHTML = "";
-
-  const id = state.activeContactId;
-  if (!id) {
-    const hint = document.createElement("div");
-    hint.className = "hint";
-    hint.textContent = "Select a contact to start chatting.";
-    messagesEl.appendChild(hint);
+function setChatHeader(contact) {
+  if (!contact) {
+    activeAvatar.textContent = "?";
+    activeName.textContent = "Select a contact";
+    activeSub.textContent = "Start chatting";
+    messageInput.disabled = true;
+    sendBtn.disabled = true;
     return;
   }
+  activeAvatar.textContent = initials(contact.name);
+  activeName.textContent = contact.name;
+  activeSub.textContent = contact.status || "";
+  messageInput.disabled = false;
+  sendBtn.disabled = false;
+}
 
-  const arr = state.messagesByContact[id] || [];
-  if (arr.length === 0) {
-    const hint = document.createElement("div");
-    hint.className = "hint";
-    hint.textContent = "No messages yet. Say hi 👋";
-    messagesEl.appendChild(hint);
-    return;
-  }
-
-  arr.forEach(m => {
+function renderMessages(list) {
+  messagesBox.innerHTML = "";
+  list.forEach(m => {
     const bubble = document.createElement("div");
-    bubble.className = "msg" + (m.me ? " me" : "");
-    bubble.innerHTML = `
-      <div class="text">${escapeHtml(m.text)}</div>
-      <span class="time">${m.time}</span>
-    `;
-    messagesEl.appendChild(bubble);
+    const mine = m.from === me.uid;
+
+    bubble.className = "bubble " + (mine ? "mine" : "theirs");
+    bubble.style.maxWidth = "78%";
+    bubble.style.margin = mine ? "8px 0 8px auto" : "8px auto 8px 0";
+    bubble.style.padding = "10px 12px";
+    bubble.style.borderRadius = "14px";
+    bubble.style.whiteSpace = "pre-wrap";
+    bubble.style.wordBreak = "break-word";
+
+    bubble.textContent = m.text || "";
+    messagesBox.appendChild(bubble);
   });
 
-  // scroll bottom
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  scrollMessagesToBottom();
 }
 
-function escapeHtml(str) {
-  return String(str)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function boot() {
-  state.profile = loadProfile();
-  state.contacts = loadContacts();
-  state.messagesByContact = loadMessages();
-
-  if (state.profile) {
-    // go to app
-    loginScreen.classList.add("hidden");
-    appRoot.classList.remove("hidden");
-
-    userName.textContent = state.profile.name;
-    userStatus.textContent = state.profile.status;
-    avatar.textContent = initials(state.profile.name);
-
-    renderContacts();
-
-    // auto select first contact if exists
-    if (state.contacts.length > 0) {
-      setActiveContact(state.contacts[0].id);
-    }
-  } else {
-    // stay on login
-    loginScreen.classList.remove("hidden");
-    appRoot.classList.add("hidden");
-  }
-}
-
-// ====== EVENTS ======
-
-// Login/Profile
-profileForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-
-  const p = {
-    name: profileName.value.trim(),
-    status: profileStatus.value.trim()
+// ---------- Data (Firestore) ----------
+async function saveMyProfile(name, status) {
+  const uid = getOrCreateUid();
+  const payload = {
+    uid,
+    name,
+    status,
+    updatedAt: serverTimestamp()
   };
+  await setDoc(userDocRef(uid), payload, { merge: true });
+  me = { uid, name, status };
+}
 
-  if (!p.name || !p.status) return;
+async function loadMyProfile() {
+  const uid = getOrCreateUid();
+  const snap = await getDoc(userDocRef(uid));
+  if (snap.exists()) {
+    const data = snap.data();
+    me = {
+      uid,
+      name: data.name || "User",
+      status: data.status || "Online"
+    };
+    return true;
+  }
+  return false;
+}
 
-  saveProfile(p);
-  boot();
-});
+function listenContacts() {
+  const qy = query(contactsColRef(me.uid), orderBy("createdAt", "desc"));
+  return onSnapshot(qy, (snap) => {
+    const contacts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderContacts(contacts);
+  });
+}
 
-// Open modal
-addContactBtn.addEventListener("click", () => {
-  openModal();
-});
+async function addContact(name, status) {
+  const payload = {
+    name,
+    status,
+    createdAt: serverTimestamp()
+  };
+  await addDoc(contactsColRef(me.uid), payload);
+}
 
-// ✅ Cancel button (حل المشكل)
-cancelBtn.addEventListener("click", (e) => {
+// Messages are stored in: users/{uid}/messages with fields convo, from, to, text, createdAt
+async function sendMessage(toContact, text) {
+  const payload = {
+    convo: convoId(me.uid, toContact.id),
+    from: me.uid,
+    to: toContact.id,
+    text,
+    createdAt: serverTimestamp()
+  };
+  await addDoc(messagesColRef(me.uid), payload);
+  // Also store a copy for the contact if you want cross-user real app (needs real auth).
+  // For now this project is single-user demo + real-time within your own account.
+}
+
+function listenMessages(contact) {
+  if (unsubMessages) unsubMessages();
+
+  const qy = query(
+    messagesColRef(me.uid),
+    where("convo", "==", convoId(me.uid, contact.id)),
+    orderBy("createdAt", "asc")
+  );
+
+  unsubMessages = onSnapshot(qy, (snap) => {
+    const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderMessages(msgs);
+  });
+}
+
+async function clearChat(contact) {
+  const qy = query(
+    messagesColRef(me.uid),
+    where("convo", "==", convoId(me.uid, contact.id))
+  );
+  const snap = await getDocs(qy);
+  const deletions = snap.docs.map(d => deleteDoc(d.ref));
+  await Promise.all(deletions);
+}
+
+// ---------- Contact selection ----------
+function selectContact(c) {
+  selectedContact = c;
+  setChatHeader(c);
+  listenMessages(c);
+}
+
+// ---------- Events ----------
+profileForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+
+  const name = safeText(profileName.value);
+  const status = safeText(profileStatus.value) || "Online";
+  if (!name) return;
+
+  await saveMyProfile(name, status);
+
+  renderMe();
+  hide(loginScreen);
+  show(appRoot);
+
+  // start listeners
+  listenContacts();
+  setChatHeader(null);
+});
+
+addContactBtn.addEventListener("click", () => openModal());
+
+cancelBtn.addEventListener("click", () => {
   closeModal();
 });
 
-// Click outside modal closes it
+// close modal if click outside
 modalBackdrop.addEventListener("click", (e) => {
   if (e.target === modalBackdrop) closeModal();
 });
 
-// ESC closes modal
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !modalBackdrop.classList.contains("hidden")) {
-    closeModal();
-  }
-});
-
-// Save new contact
-contactForm.addEventListener("submit", (e) => {
+contactForm.addEventListener("submit", async (e) => {
   e.preventDefault();
 
-  const name = contactName.value.trim();
-  const status = contactStatus.value.trim();
+  const name = safeText(contactName.value);
+  const status = safeText(contactStatus.value) || "Online";
+  if (!name) return;
 
-  if (!name || !status) return;
-
-  const newContact = {
-    id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-    name,
-    status
-  };
-
-  state.contacts.unshift(newContact);
-  saveContacts(state.contacts);
-
-  // create messages bucket
-  if (!state.messagesByContact[newContact.id]) {
-    state.messagesByContact[newContact.id] = [];
-    saveMessages(state.messagesByContact);
-  }
-
+  await addContact(name, status);
   closeModal();
-  renderContacts();
-  setActiveContact(newContact.id);
 });
 
-// Send message
-messageForm.addEventListener("submit", (e) => {
+messageForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const id = state.activeContactId;
-  if (!id) return;
+  if (!selectedContact) return;
 
-  const text = messageInput.value.trim();
+  const text = safeText(messageInput.value);
   if (!text) return;
 
-  const msg = { text, time: nowTime(), me: true };
-
-  if (!state.messagesByContact[id]) state.messagesByContact[id] = [];
-  state.messagesByContact[id].push(msg);
-
-  saveMessages(state.messagesByContact);
-
   messageInput.value = "";
-  renderMessages();
+  await sendMessage(selectedContact, text);
 });
 
-// Clear chat
-clearChatBtn.addEventListener("click", () => {
-  const id = state.activeContactId;
-  if (!id) return;
-
-  state.messagesByContact[id] = [];
-  saveMessages(state.messagesByContact);
-  renderMessages();
+clearChatBtn.addEventListener("click", async () => {
+  if (!selectedContact) return;
+  if (!confirm("Clear chat with this contact?")) return;
+  await clearChat(selectedContact);
 });
 
-// ====== START ======
-boot();
+// ---------- Boot ----------
+(async function init() {
+  const hasProfile = await loadMyProfile();
+
+  if (hasProfile) {
+    renderMe();
+    hide(loginScreen);
+    show(appRoot);
+
+    listenContacts();
+    setChatHeader(null);
+  } else {
+    // show login
+    show(loginScreen);
+    hide(appRoot);
+  }
+})();

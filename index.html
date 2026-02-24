@@ -31,7 +31,7 @@
 
         <button class="btn primary" type="submit">Enter MiniChat</button>
 
-        <p class="hint">Your profile is saved in your browser (LocalStorage).</p>
+        <p class="hint">Your profile is saved in your browser.</p>
       </form>
     </div>
   </section>
@@ -62,9 +62,7 @@
           <small id="contactsCount">0</small>
         </div>
 
-        <div class="contacts" id="contactsList">
-          <!-- contacts injected -->
-        </div>
+        <div class="contacts" id="contactsList"></div>
       </aside>
 
       <section class="chat">
@@ -94,63 +92,37 @@
           <button class="btn primary" type="submit" id="sendBtn" disabled>Send</button>
         </form>
 
-        <p class="hint center">Messages are saved in your browser (LocalStorage).</p>
+        <p class="hint center">Messages will be saved in Firestore.</p>
       </section>
     </main>
   </div>
 
-  <!-- MODAL BACKDROP -->
-  <div class="modal-backdrop hidden" id="modalBackdrop" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <h3 id="modalTitle">New Contact</h3>
+  <!-- MODAL -->
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <div class="modal">
+      <h3>New Contact</h3>
 
       <form id="contactForm" class="form">
         <label>
           Name
-          <input type="text" id="contactName" placeholder="Name (e.g. Sara)" required />
+          <input type="text" id="contactName" required />
         </label>
 
         <label>
           Status
-          <input type="text" id="contactStatus" placeholder="Status (e.g. Online)" required />
+          <input type="text" id="contactStatus" required />
         </label>
 
         <div class="row">
-          <!-- مهم: type="button" باش Cancel ما يديرش submit -->
           <button class="btn" type="button" id="cancelBtn">Cancel</button>
-          <button class="btn primary" type="submit" id="saveBtn">Save</button>
+          <button class="btn primary" type="submit">Save</button>
         </div>
-
-        <p class="hint">Messages are saved in your browser (LocalStorage).</p>
       </form>
     </div>
   </div>
 
-  <!-- ✅ Firebase (ES Modules) -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  <!-- IMPORTANT: Firebase needs module -->
+  <script type="module" src="app.js"></script>
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyBoeizt2D9twwxyRdUNxLQZPk065Y017F8",
-      authDomain: "mini-chat-app-95448.firebaseapp.com",
-      projectId: "mini-chat-app-95448",
-      storageBucket: "mini-chat-app-95448.firebasestorage.app",
-      messagingSenderId: "882567885761",
-      appId: "1:882567885761:web:8538107f864cacfbaeb540"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-
-    // ✅ نخليو db global باش app.js يقدر يوصل ليه
-    window.firebaseApp = app;
-    window.db = db;
-
-    console.log("Firebase connected ✅");
-  </script>
-
-  <!-- app.js باقي خدام عادي -->
-  <script src="app.js"></script>
 </body>
 </html>
