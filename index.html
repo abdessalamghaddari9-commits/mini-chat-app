@@ -8,7 +8,7 @@
 </head>
 <body>
 
-  <!-- LOGIN SCREEN -->
+  <!-- AUTH SCREEN -->
   <section class="login" id="loginScreen">
     <div class="card">
       <div class="brand">
@@ -16,23 +16,54 @@
         <span class="brand-name">MiniChat</span>
       </div>
 
-      <h1 class="title">Sign in</h1>
+      <h1 class="title" id="authTitle">Sign in</h1>
 
-      <form id="profileForm" class="form">
+      <!-- LOGIN -->
+      <form id="loginForm" class="form">
         <label>
-          Your Name
-          <input type="text" id="profileName" placeholder="e.g. Abdessalam" required />
+          Email
+          <input type="email" id="loginEmail" placeholder="e.g. you@gmail.com" required />
         </label>
 
         <label>
-          Your Status
-          <input type="text" id="profileStatus" placeholder="e.g. Online" required />
+          Password
+          <input type="password" id="loginPassword" placeholder="••••••••" required />
         </label>
 
-        <button class="btn primary" type="submit">Enter MiniChat</button>
+        <button class="btn primary" type="submit">Login</button>
 
-        <p class="hint">Your profile is saved in your browser.</p>
+        <p class="hint center">
+          No account?
+          <button type="button" class="btn ghost" id="goRegisterBtn">Create one</button>
+        </p>
       </form>
+
+      <!-- REGISTER -->
+      <form id="registerForm" class="form hidden">
+        <label>
+          Full Name
+          <input type="text" id="registerName" placeholder="e.g. Abdessalam" required />
+        </label>
+
+        <label>
+          Email
+          <input type="email" id="registerEmail" placeholder="e.g. you@gmail.com" required />
+        </label>
+
+        <label>
+          Password (min 6)
+          <input type="password" id="registerPassword" placeholder="••••••••" required />
+        </label>
+
+        <button class="btn primary" type="submit">Create Account</button>
+
+        <p class="hint center">
+          Already have an account?
+          <button type="button" class="btn ghost" id="goLoginBtn">Back to login</button>
+        </p>
+      </form>
+
+      <p class="hint center" id="authMsg" style="margin-top:10px;"></p>
     </div>
   </section>
 
@@ -52,6 +83,7 @@
         </div>
 
         <button class="btn ghost" id="addContactBtn" type="button">+ New Contact</button>
+        <button class="btn ghost" id="logoutBtn" type="button">Logout</button>
       </div>
     </header>
 
@@ -92,37 +124,38 @@
           <button class="btn primary" type="submit" id="sendBtn" disabled>Send</button>
         </form>
 
-        <p class="hint center">Messages will be saved in Firestore.</p>
+        <p class="hint center">Messages are saved in Firestore.</p>
       </section>
     </main>
   </div>
 
-  <!-- MODAL -->
-  <div class="modal-backdrop hidden" id="modalBackdrop">
-    <div class="modal">
-      <h3>New Contact</h3>
+  <!-- MODAL BACKDROP -->
+  <div class="modal-backdrop hidden" id="modalBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h3 id="modalTitle">New Contact</h3>
 
       <form id="contactForm" class="form">
         <label>
           Name
-          <input type="text" id="contactName" required />
+          <input type="text" id="contactName" placeholder="Name (e.g. Sara)" required />
         </label>
 
         <label>
           Status
-          <input type="text" id="contactStatus" required />
+          <input type="text" id="contactStatus" placeholder="Status (e.g. Online)" required />
         </label>
 
         <div class="row">
           <button class="btn" type="button" id="cancelBtn">Cancel</button>
-          <button class="btn primary" type="submit">Save</button>
+          <button class="btn primary" type="submit" id="saveBtn">Save</button>
         </div>
+
+        <p class="hint">Contacts saved in LocalStorage (for now).</p>
       </form>
     </div>
   </div>
 
-  <!-- IMPORTANT: Firebase needs module -->
+  <!-- IMPORTANT: module -->
   <script type="module" src="app.js"></script>
-
 </body>
 </html>
