@@ -73,7 +73,7 @@ const modalBackdrop = document.getElementById("modalBackdrop");
 const contactForm = document.getElementById("contactForm");
 const cancelBtn = document.getElementById("cancelBtn");
 
-// ✅ هنا خاص يكون موجود فـ index.html
+// ✅ خاص يكون فـ index.html
 const contactEmail = document.getElementById("contactEmail");
 
 const contactsList = document.getElementById("contactsList");
@@ -142,11 +142,12 @@ function makeConversationId(uidA, uidB) {
   return [uidA, uidB].sort().join("_");
 }
 
+// ✅ هنا درنا التعديل: email دايما lowercase
 async function ensureMyUserDoc(user) {
   const ref = doc(db, "users", user.uid);
   const payload = {
     uid: user.uid,
-    email: user.email || "",
+    email: (user.email || "").toLowerCase(), // ✅ مهم
     displayName: user.displayName || "",
     status: "Online",
     updatedAt: serverTimestamp(),
@@ -229,12 +230,9 @@ async function listenMyConversations(user) {
       });
     }
 
-    // ترتيب بسيط (A-Z)
     items.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
-
     renderConversations(items);
 
-    // اول مرة: دخل لأول شات تلقائيا
     if (!activeConversationId && items[0]) {
       setActiveConversation(items[0].id, items[0]);
     }
@@ -314,7 +312,7 @@ async function sendMessage(text) {
     text: clean,
     createdAt: serverTimestamp(),
     senderUid: u.uid,
-    senderEmail: u.email || "",
+    senderEmail: (u.email || "").toLowerCase(),
     senderName: u.displayName || "",
   });
 }
@@ -337,7 +335,6 @@ async function createChatWithEmail(friendEmail) {
   const cid = makeConversationId(u.uid, friend.uid);
   const convRef = doc(db, "conversations", cid);
 
-  // create if not exists (safe)
   const convSnap = await getDoc(convRef);
   if (!convSnap.exists()) {
     await setDoc(convRef, {
@@ -347,7 +344,6 @@ async function createChatWithEmail(friendEmail) {
   }
 
   hideModal();
-  // listener ديال conversations غادي يجيبها وحدو
 }
 
 // ---------- UI state ----------
@@ -471,5 +467,6 @@ contactForm.addEventListener("submit", async (e) => {
 });
 
 clearChatBtn.addEventListener("click", () => {
+  // غير كنمسحو العرض، ما كنمسحوش من Firestore
   messagesEl.innerHTML = "";
 });
