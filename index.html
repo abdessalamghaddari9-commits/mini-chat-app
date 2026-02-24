@@ -126,6 +126,31 @@
     </div>
   </div>
 
+  <!-- ✅ Firebase (ES Modules) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBoeizt2D9twwxyRdUNxLQZPk065Y017F8",
+      authDomain: "mini-chat-app-95448.firebaseapp.com",
+      projectId: "mini-chat-app-95448",
+      storageBucket: "mini-chat-app-95448.firebasestorage.app",
+      messagingSenderId: "882567885761",
+      appId: "1:882567885761:web:8538107f864cacfbaeb540"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // ✅ نخليو db global باش app.js يقدر يوصل ليه
+    window.firebaseApp = app;
+    window.db = db;
+
+    console.log("Firebase connected ✅");
+  </script>
+
+  <!-- app.js باقي خدام عادي -->
   <script src="app.js"></script>
 </body>
 </html>
