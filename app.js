@@ -1,4 +1,5 @@
-// app.js (Firebase Auth + Firestore) — MUST be loaded as type="module"
+// app.js (Firebase Auth + Firestore private 1-1 chats)
+// MUST be loaded as type="module" in index.html
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import {
@@ -12,12 +13,17 @@ import {
 
 import {
   getFirestore,
+  doc,
+  setDoc,
+  getDoc,
   collection,
   addDoc,
   serverTimestamp,
   query,
   orderBy,
   onSnapshot,
+  where,
+  getDocs,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 // ✅ Firebase config ديالك
@@ -65,9 +71,10 @@ const sendBtn = document.getElementById("sendBtn");
 const addContactBtn = document.getElementById("addContactBtn");
 const modalBackdrop = document.getElementById("modalBackdrop");
 const contactForm = document.getElementById("contactForm");
-const contactName = document.getElementById("contactName");
-const contactStatus = document.getElementById("contactStatus");
 const cancelBtn = document.getElementById("cancelBtn");
+
+// ✅ هنا خاص يكون موجود فـ index.html
+const contactEmail = document.getElementById("contactEmail");
 
 const contactsList = document.getElementById("contactsList");
 const contactsCount = document.getElementById("contactsCount");
@@ -86,14 +93,12 @@ function initials(name) {
   const b = parts[1]?.[0] || "";
   return (a + b).toUpperCase();
 }
-
 function escapeHtml(str) {
   return (str || "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 }
-
 function setAuthMessage(msg = "", isError = false) {
   authMsg.textContent = msg;
   authMsg.style.opacity = msg ? "1" : "0";
@@ -106,7 +111,6 @@ function showLogin() {
   registerForm.classList.add("hidden");
   setAuthMessage("");
 }
-
 function showRegister() {
   authTitle.textContent = "Create account";
   loginForm.classList.add("hidden");
@@ -118,7 +122,7 @@ function showRegister() {
 function showModal() {
   modalBackdrop.classList.remove("hidden");
   modalBackdrop.setAttribute("aria-hidden", "false");
-  contactName.focus();
+  contactEmail?.focus();
 }
 function hideModal() {
   modalBackdrop.classList.add("hidden");
@@ -126,80 +130,147 @@ function hideModal() {
   contactForm.reset();
 }
 
-// ---------- Contacts (LocalStorage مؤقتاً) ----------
-const LS_CONTACTS = "minichat_contacts";
-let contacts = [];
-let activeContactId = null;
+// ---------- Chat State ----------
+let activeConversationId = null;
+let unsubMessages = null;
+let unsubConversations = null;
 
-function loadContacts() {
-  try {
-    contacts = JSON.parse(localStorage.getItem(LS_CONTACTS) || "[]");
-  } catch {
-    contacts = [];
-  }
-}
-function saveContacts() {
-  localStorage.setItem(LS_CONTACTS, JSON.stringify(contacts));
+// cache users data: uid -> {displayName,email,status}
+const usersCache = new Map();
+
+function makeConversationId(uidA, uidB) {
+  return [uidA, uidB].sort().join("_");
 }
 
-function renderContacts() {
+async function ensureMyUserDoc(user) {
+  const ref = doc(db, "users", user.uid);
+  const payload = {
+    uid: user.uid,
+    email: user.email || "",
+    displayName: user.displayName || "",
+    status: "Online",
+    updatedAt: serverTimestamp(),
+  };
+  await setDoc(ref, payload, { merge: true });
+  usersCache.set(user.uid, payload);
+}
+
+async function getUserByEmail(email) {
+  const clean = (email || "").trim().toLowerCase();
+  if (!clean) return null;
+
+  const q = query(collection(db, "users"), where("email", "==", clean));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+
+  const d = snap.docs[0].data();
+  usersCache.set(d.uid, d);
+  return d;
+}
+
+async function getUserByUid(uid) {
+  if (usersCache.has(uid)) return usersCache.get(uid);
+
+  const ref = doc(db, "users", uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+
+  const d = snap.data();
+  usersCache.set(uid, d);
+  return d;
+}
+
+// ---------- Conversations list ----------
+function renderConversations(items) {
   contactsList.innerHTML = "";
-  contactsCount.textContent = String(contacts.length);
+  contactsCount.textContent = String(items.length);
 
-  if (contacts.length === 0) {
-    contactsList.innerHTML = `<div class="hint" style="padding:10px;">No contacts yet. Click “+ New Contact”.</div>`;
+  if (items.length === 0) {
+    contactsList.innerHTML = `<div class="hint" style="padding:10px;">No chats yet. Click “+ New Contact”.</div>`;
     return;
   }
 
-  contacts.forEach((c) => {
-    const item = document.createElement("button");
-    item.className = "contact " + (c.id === activeContactId ? "active" : "");
-    item.type = "button";
-    item.innerHTML = `
-      <div class="contact-avatar">${escapeHtml(initials(c.name))}</div>
+  items.forEach((it) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "contact " + (it.id === activeConversationId ? "active" : "");
+
+    btn.innerHTML = `
+      <div class="contact-avatar">${escapeHtml(initials(it.title))}</div>
       <div class="contact-meta">
-        <div class="contact-name">${escapeHtml(c.name)}</div>
-        <div class="contact-sub">${escapeHtml(c.status || "")}</div>
+        <div class="contact-name">${escapeHtml(it.title)}</div>
+        <div class="contact-sub">${escapeHtml(it.sub || "")}</div>
       </div>
     `;
-    item.addEventListener("click", () => setActiveContact(c.id));
-    contactsList.appendChild(item);
+
+    btn.addEventListener("click", () => setActiveConversation(it.id, it));
+    contactsList.appendChild(btn);
   });
 }
 
-function setActiveContact(id) {
-  activeContactId = id;
-  const c = contacts.find((x) => x.id === id);
-  if (!c) return;
+async function listenMyConversations(user) {
+  if (unsubConversations) unsubConversations();
 
-  activeAvatar.textContent = initials(c.name);
-  activeName.textContent = c.name;
-  activeSub.textContent = c.status || "";
+  const q = query(collection(db, "conversations"), where("members", "array-contains", user.uid));
 
-  // Auth required to send
-  const u = auth.currentUser;
-  messageInput.disabled = !u;
-  sendBtn.disabled = !u;
+  unsubConversations = onSnapshot(q, async (snap) => {
+    const items = [];
 
-  renderContacts();
+    for (const d of snap.docs) {
+      const conv = d.data();
+      const otherUid = (conv.members || []).find((x) => x !== user.uid);
+      const other = otherUid ? await getUserByUid(otherUid) : null;
+
+      items.push({
+        id: d.id,
+        title: other?.displayName || other?.email || "Unknown",
+        sub: other?.status || "",
+        otherUid,
+      });
+    }
+
+    // ترتيب بسيط (A-Z)
+    items.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
+    renderConversations(items);
+
+    // اول مرة: دخل لأول شات تلقائيا
+    if (!activeConversationId && items[0]) {
+      setActiveConversation(items[0].id, items[0]);
+    }
+  });
 }
 
-// ---------- Firestore: Messages (Global room for now) ----------
-let unsubMessages = null;
+function setActiveConversation(conversationId, info) {
+  activeConversationId = conversationId;
 
-function startMessagesListener() {
-  const q = query(collection(db, "chats"), orderBy("createdAt", "asc"));
+  activeAvatar.textContent = initials(info?.title || "?");
+  activeName.textContent = info?.title || "Chat";
+  activeSub.textContent = info?.sub || "";
+
+  messageInput.disabled = false;
+  sendBtn.disabled = false;
+
+  startMessagesListener(conversationId);
+}
+
+// ---------- Messages ----------
+function startMessagesListener(conversationId) {
+  if (!conversationId) return;
 
   if (unsubMessages) unsubMessages();
+
+  const msgsRef = collection(db, "conversations", conversationId, "messages");
+  const q = query(msgsRef, orderBy("createdAt", "asc"));
 
   unsubMessages = onSnapshot(q, (snap) => {
     messagesEl.innerHTML = "";
 
-    snap.forEach((doc) => {
-      const m = doc.data();
-      const u = auth.currentUser;
+    const me = auth.currentUser;
 
-      const mine = u && m.senderUid === u.uid;
+    snap.forEach((docSnap) => {
+      const m = docSnap.data();
+      const mine = me && m.senderUid === me.uid;
 
       const div = document.createElement("div");
       div.className = "msg " + (mine ? "me" : "them");
@@ -209,12 +280,10 @@ function startMessagesListener() {
           ? m.createdAt.toDate().toLocaleString()
           : "";
 
-      const who = m.senderName || m.senderEmail || "Unknown";
-
       div.innerHTML = `
         <div class="bubble">
           <div class="text">${escapeHtml(m.text || "")}</div>
-          <div class="meta">${escapeHtml(who)}${date ? " • " + escapeHtml(date) : ""}</div>
+          <div class="meta">${escapeHtml(m.senderName || m.senderEmail || "")}${date ? " • " + escapeHtml(date) : ""}</div>
         </div>
       `;
 
@@ -231,18 +300,54 @@ async function sendMessage(text) {
 
   const u = auth.currentUser;
   if (!u) {
-    alert("You must be logged in to send messages.");
+    alert("You must be logged in.");
+    return;
+  }
+  if (!activeConversationId) {
+    alert("Select a chat first.");
     return;
   }
 
-  await addDoc(collection(db, "chats"), {
+  const msgsRef = collection(db, "conversations", activeConversationId, "messages");
+
+  await addDoc(msgsRef, {
     text: clean,
     createdAt: serverTimestamp(),
-
     senderUid: u.uid,
     senderEmail: u.email || "",
     senderName: u.displayName || "",
   });
+}
+
+// ---------- Create conversation with friend email ----------
+async function createChatWithEmail(friendEmail) {
+  const u = auth.currentUser;
+  if (!u) return;
+
+  const friend = await getUserByEmail(friendEmail);
+  if (!friend) {
+    alert("هاد الإيميل ما لقيتوش فـ Users. خاص صاحبك يسجل فالتطبيق مرة وحدة.");
+    return;
+  }
+  if (friend.uid === u.uid) {
+    alert("ما تقدرش تفتح شات مع راسك 😄");
+    return;
+  }
+
+  const cid = makeConversationId(u.uid, friend.uid);
+  const convRef = doc(db, "conversations", cid);
+
+  // create if not exists (safe)
+  const convSnap = await getDoc(convRef);
+  if (!convSnap.exists()) {
+    await setDoc(convRef, {
+      members: [u.uid, friend.uid],
+      createdAt: serverTimestamp(),
+    });
+  }
+
+  hideModal();
+  // listener ديال conversations غادي يجيبها وحدو
 }
 
 // ---------- UI state ----------
@@ -254,19 +359,8 @@ function enterApp(user) {
   userStatus.textContent = "Online";
   avatar.textContent = initials(user.displayName || user.email || "U");
 
-  loadContacts();
-  if (contacts.length === 0) {
-    contacts.push({ id: crypto.randomUUID(), name: "General Chat", status: "Public room" });
-    saveContacts();
-  }
-
-  renderContacts();
-  if (!activeContactId) setActiveContact(contacts[0].id);
-
-  startMessagesListener();
-
-  messageInput.disabled = false;
-  sendBtn.disabled = false;
+  messageInput.disabled = true;
+  sendBtn.disabled = true;
 
   setAuthMessage("");
 }
@@ -278,9 +372,13 @@ function exitApp() {
   messageInput.disabled = true;
   sendBtn.disabled = true;
 
-  // stop listener
   if (unsubMessages) unsubMessages();
   unsubMessages = null;
+
+  if (unsubConversations) unsubConversations();
+  unsubConversations = null;
+
+  activeConversationId = null;
 
   showLogin();
 }
@@ -294,15 +392,13 @@ registerForm.addEventListener("submit", async (e) => {
   setAuthMessage("");
 
   const name = registerName.value.trim();
-  const email = registerEmail.value.trim();
+  const email = registerEmail.value.trim().toLowerCase();
   const pass = registerPassword.value;
 
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     await updateProfile(cred.user, { displayName: name });
-
-    setAuthMessage("Account created ✅ Logging in...");
-    // onAuthStateChanged will handle UI
+    setAuthMessage("Account created ✅");
   } catch (err) {
     setAuthMessage(err?.message || String(err), true);
   }
@@ -312,7 +408,7 @@ loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   setAuthMessage("");
 
-  const email = loginEmail.value.trim();
+  const email = loginEmail.value.trim().toLowerCase();
   const pass = loginPassword.value;
 
   try {
@@ -331,10 +427,14 @@ logoutBtn.addEventListener("click", async () => {
   }
 });
 
-// Keep session
-onAuthStateChanged(auth, (user) => {
-  if (user) enterApp(user);
-  else exitApp();
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    await ensureMyUserDoc(user);
+    enterApp(user);
+    await listenMyConversations(user);
+  } else {
+    exitApp();
+  }
 });
 
 // ---------- Chat events ----------
@@ -352,23 +452,22 @@ messageForm.addEventListener("submit", async (e) => {
   }
 });
 
-addContactBtn.addEventListener("click", () => showModal());
+addContactBtn.addEventListener("click", showModal);
 cancelBtn.addEventListener("click", hideModal);
 modalBackdrop.addEventListener("click", (e) => {
   if (e.target === modalBackdrop) hideModal();
 });
 
-contactForm.addEventListener("submit", (e) => {
+contactForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  const email = (contactEmail?.value || "").trim().toLowerCase();
+  if (!email) return;
 
-  const name = contactName.value.trim();
-  const status = contactStatus.value.trim();
-  if (!name || !status) return;
-
-  contacts.push({ id: crypto.randomUUID(), name, status });
-  saveContacts();
-  hideModal();
-  renderContacts();
+  try {
+    await createChatWithEmail(email);
+  } catch (err) {
+    alert(err?.message || err);
+  }
 });
 
 clearChatBtn.addEventListener("click", () => {

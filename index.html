@@ -134,15 +134,11 @@
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <h3 id="modalTitle">New Contact</h3>
 
+      <!-- ✅ هنا بدلناها ل Friend Email -->
       <form id="contactForm" class="form">
         <label>
-          Name
-          <input type="text" id="contactName" placeholder="Name (e.g. Sara)" required />
-        </label>
-
-        <label>
-          Status
-          <input type="text" id="contactStatus" placeholder="Status (e.g. Online)" required />
+          Friend Email
+          <input type="email" id="contactEmail" placeholder="friend@gmail.com" required />
         </label>
 
         <div class="row">
@@ -150,7 +146,9 @@
           <button class="btn primary" type="submit" id="saveBtn">Save</button>
         </div>
 
-        <p class="hint">Contacts saved in LocalStorage (for now).</p>
+        <p class="hint">
+          Important: your friend must create an account first, then you add his email.
+        </p>
       </form>
     </div>
   </div>
