@@ -1,4 +1,4 @@
-// app.js (Firebase Auth + Firestore private 1-1 chats)
+// app.js (Firebase Auth + Firestore private 1-1 chats + last message preview)
 // MUST be loaded as type="module" in index.html
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
@@ -24,6 +24,7 @@ import {
   onSnapshot,
   where,
   getDocs,
+  updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 // ✅ Firebase config ديالك
@@ -72,8 +73,6 @@ const addContactBtn = document.getElementById("addContactBtn");
 const modalBackdrop = document.getElementById("modalBackdrop");
 const contactForm = document.getElementById("contactForm");
 const cancelBtn = document.getElementById("cancelBtn");
-
-// ✅ خاص يكون فـ index.html
 const contactEmail = document.getElementById("contactEmail");
 
 const contactsList = document.getElementById("contactsList");
@@ -103,6 +102,15 @@ function setAuthMessage(msg = "", isError = false) {
   authMsg.textContent = msg;
   authMsg.style.opacity = msg ? "1" : "0";
   authMsg.style.color = isError ? "#ffb4b4" : "";
+}
+function fmtTime(ts) {
+  try {
+    const d = ts?.toDate?.();
+    if (!d) return "";
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
 }
 
 function showLogin() {
@@ -135,19 +143,19 @@ let activeConversationId = null;
 let unsubMessages = null;
 let unsubConversations = null;
 
-// cache users data: uid -> {displayName,email,status}
+// cache users data
 const usersCache = new Map();
 
 function makeConversationId(uidA, uidB) {
   return [uidA, uidB].sort().join("_");
 }
 
-// ✅ هنا درنا التعديل: email دايما lowercase
+// ✅ email lowercase فـ users doc
 async function ensureMyUserDoc(user) {
   const ref = doc(db, "users", user.uid);
   const payload = {
     uid: user.uid,
-    email: (user.email || "").toLowerCase(), // ✅ مهم
+    email: (user.email || "").toLowerCase(),
     displayName: user.displayName || "",
     status: "Online",
     updatedAt: serverTimestamp(),
@@ -196,11 +204,17 @@ function renderConversations(items) {
     btn.type = "button";
     btn.className = "contact " + (it.id === activeConversationId ? "active" : "");
 
+    const time = it.lastAt ? fmtTime(it.lastAt) : "";
+    const sub = it.lastMessage ? it.lastMessage : (it.sub || "");
+
     btn.innerHTML = `
       <div class="contact-avatar">${escapeHtml(initials(it.title))}</div>
       <div class="contact-meta">
-        <div class="contact-name">${escapeHtml(it.title)}</div>
-        <div class="contact-sub">${escapeHtml(it.sub || "")}</div>
+        <div class="contact-name" style="display:flex;justify-content:space-between;gap:10px;">
+          <span>${escapeHtml(it.title)}</span>
+          <small style="opacity:.7;">${escapeHtml(time)}</small>
+        </div>
+        <div class="contact-sub">${escapeHtml(sub || "")}</div>
       </div>
     `;
 
@@ -227,10 +241,18 @@ async function listenMyConversations(user) {
         title: other?.displayName || other?.email || "Unknown",
         sub: other?.status || "",
         otherUid,
+        lastMessage: conv.lastMessage || "",
+        lastAt: conv.lastAt || null,
       });
     }
 
-    items.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+    // ✅ ترتيب حسب lastAt (الأحدث فوق)
+    items.sort((a, b) => {
+      const ta = a.lastAt?.toMillis?.() || 0;
+      const tb = b.lastAt?.toMillis?.() || 0;
+      return tb - ta;
+    });
+
     renderConversations(items);
 
     if (!activeConversationId && items[0]) {
@@ -263,7 +285,6 @@ function startMessagesListener(conversationId) {
 
   unsubMessages = onSnapshot(q, (snap) => {
     messagesEl.innerHTML = "";
-
     const me = auth.currentUser;
 
     snap.forEach((docSnap) => {
@@ -284,7 +305,6 @@ function startMessagesListener(conversationId) {
           <div class="meta">${escapeHtml(m.senderName || m.senderEmail || "")}${date ? " • " + escapeHtml(date) : ""}</div>
         </div>
       `;
-
       messagesEl.appendChild(div);
     });
 
@@ -297,23 +317,24 @@ async function sendMessage(text) {
   if (!clean) return;
 
   const u = auth.currentUser;
-  if (!u) {
-    alert("You must be logged in.");
-    return;
-  }
-  if (!activeConversationId) {
-    alert("Select a chat first.");
-    return;
-  }
+  if (!u) return alert("You must be logged in.");
+  if (!activeConversationId) return alert("Select a chat first.");
 
   const msgsRef = collection(db, "conversations", activeConversationId, "messages");
 
+  // 1) زيد المسج
   await addDoc(msgsRef, {
     text: clean,
     createdAt: serverTimestamp(),
     senderUid: u.uid,
     senderEmail: (u.email || "").toLowerCase(),
     senderName: u.displayName || "",
+  });
+
+  // 2) حدّث conversation باش يبان last message فـ contacts
+  await updateDoc(doc(db, "conversations", activeConversationId), {
+    lastMessage: clean,
+    lastAt: serverTimestamp(),
   });
 }
 
@@ -324,7 +345,7 @@ async function createChatWithEmail(friendEmail) {
 
   const friend = await getUserByEmail(friendEmail);
   if (!friend) {
-    alert("هاد الإيميل ما لقيتوش فـ Users. خاص صاحبك يسجل فالتطبيق مرة وحدة.");
+    alert("هاد الإيميل ما لقيتوش. خاص صاحبك يسجل/يدير login مرة وحدة.");
     return;
   }
   if (friend.uid === u.uid) {
@@ -340,6 +361,8 @@ async function createChatWithEmail(friendEmail) {
     await setDoc(convRef, {
       members: [u.uid, friend.uid],
       createdAt: serverTimestamp(),
+      lastMessage: "",
+      lastAt: serverTimestamp(),
     });
   }
 
@@ -369,11 +392,10 @@ function exitApp() {
   sendBtn.disabled = true;
 
   if (unsubMessages) unsubMessages();
-  unsubMessages = null;
-
   if (unsubConversations) unsubConversations();
-  unsubConversations = null;
 
+  unsubMessages = null;
+  unsubConversations = null;
   activeConversationId = null;
 
   showLogin();
@@ -467,6 +489,5 @@ contactForm.addEventListener("submit", async (e) => {
 });
 
 clearChatBtn.addEventListener("click", () => {
-  // غير كنمسحو العرض، ما كنمسحوش من Firestore
   messagesEl.innerHTML = "";
 });
