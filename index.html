@@ -8,7 +8,7 @@
 </head>
 <body>
 
-  <!-- AUTH SCREEN -->
+  <!-- AUTH -->
   <section class="login" id="loginScreen">
     <div class="card">
       <div class="brand">
@@ -18,15 +18,12 @@
 
       <h1 class="title" id="authTitle">Sign in</h1>
 
-      <!-- LOGIN -->
       <form id="loginForm" class="form">
-        <label>
-          Email
-          <input type="email" id="loginEmail" placeholder="e.g. you@gmail.com" required />
+        <label>Email
+          <input type="email" id="loginEmail" placeholder="you@gmail.com" required />
         </label>
 
-        <label>
-          Password
+        <label>Password
           <input type="password" id="loginPassword" placeholder="••••••••" required />
         </label>
 
@@ -38,20 +35,16 @@
         </p>
       </form>
 
-      <!-- REGISTER -->
       <form id="registerForm" class="form hidden">
-        <label>
-          Full Name
+        <label>Full Name
           <input type="text" id="registerName" placeholder="e.g. Abdessalam" required />
         </label>
 
-        <label>
-          Email
-          <input type="email" id="registerEmail" placeholder="e.g. you@gmail.com" required />
+        <label>Email
+          <input type="email" id="registerEmail" placeholder="you@gmail.com" required />
         </label>
 
-        <label>
-          Password (min 6)
+        <label>Password (min 6)
           <input type="password" id="registerPassword" placeholder="••••••••" required />
         </label>
 
@@ -82,7 +75,7 @@
           <div class="profile-status" id="userStatus">Online</div>
         </div>
 
-        <button class="btn ghost" id="addContactBtn" type="button">+ New Contact</button>
+        <button class="btn ghost" id="addContactBtn" type="button">+ New Chat</button>
         <button class="btn ghost" id="logoutBtn" type="button">Logout</button>
       </div>
     </header>
@@ -90,8 +83,12 @@
     <main class="layout">
       <aside class="sidebar">
         <div class="sidebar-head">
-          <h2>Contacts</h2>
+          <h2>Chats</h2>
           <small id="contactsCount">0</small>
+        </div>
+
+        <div class="searchbox">
+          <input id="searchInput" placeholder="Search..." />
         </div>
 
         <div class="contacts" id="contactsList"></div>
@@ -102,20 +99,27 @@
           <div class="chat-title">
             <div class="chat-avatar" id="activeAvatar">?</div>
             <div>
-              <div class="chat-name" id="activeName">Select a contact</div>
+              <div class="chat-name" id="activeName">Select a chat</div>
               <div class="chat-sub">
-                <span id="activeSub">Start chatting</span>
+                <span id="activeSub">—</span>
                 <span id="typingIndicator" class="typing hidden"> • typing…</span>
               </div>
             </div>
           </div>
 
-          <button class="btn ghost" id="clearChatBtn" type="button">Clear Chat</button>
+          <div class="chat-actions">
+            <button class="btn ghost" id="clearChatBtn" type="button">Clear</button>
+          </div>
         </div>
 
         <div class="messages" id="messages"></div>
 
         <form class="composer" id="messageForm">
+          <label class="attach">
+            📎
+            <input type="file" id="imageInput" accept="image/*" hidden />
+          </label>
+
           <input
             type="text"
             id="messageInput"
@@ -127,35 +131,33 @@
           <button class="btn primary" type="submit" id="sendBtn" disabled>Send</button>
         </form>
 
-        <p class="hint center">Messages are saved in Firestore.</p>
+        <p class="hint center">Private chats via Firebase.</p>
       </section>
     </main>
   </div>
 
-  <!-- MODAL BACKDROP -->
+  <!-- MODAL -->
   <div class="modal-backdrop hidden" id="modalBackdrop" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <h3 id="modalTitle">New Contact</h3>
+      <h3 id="modalTitle">New Chat</h3>
 
       <form id="contactForm" class="form">
-        <label>
-          Friend Email
+        <label>Friend Email
           <input type="email" id="contactEmail" placeholder="friend@gmail.com" required />
         </label>
 
         <div class="row">
           <button class="btn" type="button" id="cancelBtn">Cancel</button>
-          <button class="btn primary" type="submit" id="saveBtn">Save</button>
+          <button class="btn primary" type="submit" id="saveBtn">Start</button>
         </div>
 
         <p class="hint">
-          Important: your friend must create an account first, then you add his email.
+          Friend must register first, then add his email here.
         </p>
       </form>
     </div>
   </div>
 
-  <!-- IMPORTANT: module -->
   <script type="module" src="app.js"></script>
 </body>
 </html>
